@@ -10,6 +10,8 @@ Get rid of video link clutter
 
 Unfortunately, videos over 50MB cannot be downloaded due to Telegram API limitations.
 
+**When adding the bot to a group / channel, remember to give it permissions to post and delete messages!**
+
 ## Running the project
 You'll need to set two environment variables:
 - **TOKEN**, which is your bot's HTTP token to access Telegram API; you can create it via [@BotFather](https://t.me/BotFather) (detailed instructions [here](https://core.telegram.org/bots#6-botfather)). Rememeber to keep it safe!
