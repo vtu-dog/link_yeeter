@@ -48,11 +48,36 @@ async fn main() {
             _ => return,
         }
 
+        // prepare the video's caption
+        let mut caption = String::new();
+        let mut signature: Option<String> = None;
+        let msg = &context.text.value;
+
+        // get original poster's nickname when not in a channel
+        if let Some(from) = &context.from {
+            if &from.first_name == "Telegram" {
+                return;
+            }
+            if let Some(nick) = &from.username {
+                signature = Some(nick.to_string())
+            }
+        }
+
+        // get original poster's nickname when in a channel
+        if let Some(nick) = &context.author_signature {
+            signature = Some(nick.to_string())
+        }
+
+        // copy the original message and add a signature (if applicable)
+        if let Some(s) = signature {
+            caption.push_str(&format!("[original poster: {}]\n", s));
+        }
+        caption.push_str(msg);
+
         // pick a random filename for the .mp4 file
         let filename = format!("{}.mp4", utils::random_string(10));
 
         // find links in a message
-        let msg = &context.text.value;
         match ytdl::find_link(msg) {
             None => return, // no link (or too many links) found
             Some(url) => {
@@ -66,29 +91,7 @@ async fn main() {
             }
         }
 
-        // prepare the video message
-        let mut caption = String::new();
-        let mut signature: Option<String> = None;
-
-        // get original poster's nickname when not in a channel
-        if let Some(from) = &context.from {
-            if let Some(nick) = &from.username {
-                signature = Some(nick.to_string())
-            }
-        }
-
-        // get original poster's nickname when in a channel
-        if let Some(nick) = &context.author_signature {
-            signature = Some(nick.to_string())
-        }
-
-        // copy the original message
-        if let Some(s) = signature {
-            caption.push_str(&format!("[original poster: {}]\n", s));
-        }
-        caption.push_str(msg);
-
-        // prepare the video itself
+        // prepare the video
         let video_bytes = std::fs::read(&filename).unwrap();
         let video = Video::with_bytes(&video_bytes).caption(&caption);
 
