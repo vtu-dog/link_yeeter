@@ -53,6 +53,8 @@ pub fn download(url: &str, filename: &str) -> Result<(), String> {
             filename,
             "--format",
             "bestvideo+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+            "--postprocessor-args",
+            "-c:v libx264",
             "--merge-output-format",
             "mp4",
             url,
