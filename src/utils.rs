@@ -4,6 +4,8 @@ use rand::distributions::Alphanumeric;
 use rand::Rng;
 use retry::delay::{jitter, Exponential};
 
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 // returns a Vec of 5 durations with a random jitter
@@ -44,9 +46,19 @@ pub fn random_string(size: usize) -> String {
         .collect::<String>()
 }
 
+// check if a file exists in the filesystem
+pub fn file_exists(path: &str) -> bool {
+    Path::new(path).exists()
+}
+
+// reads a file from the filesystem
+pub fn read_file(filename: &str) -> Vec<u8> {
+    fs::read(&filename).unwrap()
+}
+
 // deletes a file from the filesystem
 pub fn delete_file(path: &str) {
-    if std::path::Path::new(path).exists() {
-        std::fs::remove_file(&path).expect("Couldn't remove file");
+    if file_exists(&path) {
+        fs::remove_file(&path).expect("Couldn't remove file");
     }
 }

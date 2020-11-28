@@ -88,11 +88,18 @@ async fn main() {
                     eprintln!("{}", output);
                     return;
                 }
+
+                // check if youtube-dl downloaded a file
+                if !utils::file_exists(&filename) {
+                    // the file was over 50MB
+                    eprintln!("Cannot download {}, the file is too large", url);
+                    return;
+                }
             }
         }
 
         // prepare the video
-        let video_bytes = std::fs::read(&filename).unwrap();
+        let video_bytes = utils::read_file(&filename);
         let video = Video::with_bytes(&video_bytes).caption(&caption);
 
         // send the video message
