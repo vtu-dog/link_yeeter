@@ -68,7 +68,7 @@ pub fn download(url: &str, filename: &str) -> Result<(), String> {
     // obtain the exit status
     let exit_status = ytdl.wait().expect("Command wasn't running");
 
-    // in case of an error, return stdout as a string
+    // in case of an error, return stderr as a string
     if !exit_status.success() {
         let mut buf = String::new();
         if let Ok(_) = ytdl.stderr.take().unwrap().read_to_string(&mut buf) {

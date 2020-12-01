@@ -30,6 +30,9 @@ async fn main() {
         let chat_id = context.chat.id;
         let get_member = &context.bot.get_chat_member(chat_id, bot_id).call().await;
 
+        // additional functionality when in a private chat
+        let mut is_member = false;
+
         match get_member {
             Ok(member) => match member.status {
                 Administrator {
@@ -42,7 +45,9 @@ async fn main() {
                     can_post_messages: Some(true),
                     ..
                 } => { /* pass */ }
-                Member => { /* pass */ }
+                Member => {
+                    is_member = true;
+                }
                 _ => return,
             },
             _ => return,
@@ -92,7 +97,25 @@ async fn main() {
                 // check if youtube-dl downloaded a file
                 if !utils::file_exists(&filename) {
                     // the file was over 50MB
-                    eprintln!("Cannot download {}, the file is too large", url);
+                    // if in a private chat, notify the user
+                    if is_member {
+                        let call_result = utils::exponential_retry_async(|| async {
+                            Ok(context
+                                .bot
+                                .send_message(chat_id, "Cannot download, the file is too large")
+                                .in_reply_to(context.message_id)
+                                .call()
+                                .await?)
+                        })
+                        .await;
+
+                        // make sure everything went smoothly
+                        if let Err(err) = call_result {
+                            eprintln!("An error occurred during send_message: {}", err);
+                        }
+                    } else {
+                        eprintln!("Cannot download {}, the file is too large", url);
+                    }
                     return;
                 }
             }
@@ -131,7 +154,7 @@ async fn main() {
 
         // make sure everything went smoothly
         if let Err(err) = call_result {
-            eprintln!("An error occurred during send_video: {}", err);
+            eprintln!("An error occurred during delete_message: {}", err);
         }
 
         // delete the leftover file
