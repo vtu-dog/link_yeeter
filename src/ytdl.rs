@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 lazy_static! {
     static ref WHITELIST: Vec<String> = std::env::var("WHITELIST")
         .unwrap()
-        .split(",")
+        .split(',')
         .map(|s| s.to_owned())
         .collect();
 }
@@ -18,7 +18,7 @@ lazy_static! {
 // finds a single link in a given message
 pub fn find_link(msg: &str) -> Option<&str> {
     // create LinkFinder and initialize it with proper config
-    let mut finder: LinkFinder = LinkFinder::new();
+    let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
     // find all the links in msg
@@ -71,7 +71,7 @@ pub fn download(url: &str, filename: &str) -> Result<(), String> {
     // in case of an error, return stderr as a string
     if !exit_status.success() {
         let mut buf = String::new();
-        if let Ok(_) = ytdl.stderr.take().unwrap().read_to_string(&mut buf) {
+        if ytdl.stderr.take().unwrap().read_to_string(&mut buf).is_ok() {
             return Err(buf);
         }
     }
