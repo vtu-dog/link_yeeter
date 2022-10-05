@@ -1,64 +1,92 @@
-use failure::Error;
-use futures::future::Future;
-use rand::distributions::Alphanumeric;
-use rand::Rng;
-use retry::delay::{jitter, Exponential};
+use async_process::Command;
+use linkify::{LinkFinder, LinkKind};
+use once_cell::sync::Lazy;
+use rand::{distributions::Alphanumeric, Rng};
+use url::Url;
 
-use std::fs;
-use std::path::Path;
-use std::time::Duration;
-
-// returns a Vec of 5 durations with a random jitter
-fn random_durations() -> Vec<Duration> {
-    Exponential::from_millis(2)
-        .map(jitter)
-        .map(|x| x * 100)
-        .take(5)
+// Initalise a whitelist of websites to download from.
+// Format: `site1.com,site2.net,site3.edu`.
+static WHITELIST: Lazy<Vec<String>> = Lazy::new(|| {
+    std::env::var("WHITELIST")
+        .expect("WHITELIST environment variable not set")
+        .split(',')
+        .map(|s| s.trim().to_string())
         .collect()
-}
+});
 
-// takes a Fn closure that returns a Result<T, Error>
-// calls the closure asynchronously until it either returns Ok or fails enough times
-pub async fn exponential_retry_async<C, F, T>(closure: C) -> Result<T, Error>
-where
-    C: Fn() -> F,
-    F: Future<Output = Result<T, Error>>,
-{
-    let mut err = None;
-    for duration in random_durations() {
-        tokio::time::delay_for(duration).await;
-        match closure().await {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                err = Some(e);
-            }
-        }
-    }
-
-    Err(err.unwrap())
-}
-
-// generates a random alphanumeric string (to be used as a filename)
+/// Obtain a random string of the specified length.
 pub fn random_string(size: usize) -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(size)
-        .collect::<String>()
+        .map(char::from)
+        .collect()
 }
 
-// check if a file exists in the filesystem
-pub fn file_exists(path: &str) -> bool {
-    Path::new(path).exists()
+/// Finds a single URL in a given message.
+pub fn find_url(msg: &str) -> Option<&str> {
+    // create LinkFinder and initialise it with a proper config
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+
+    // find all the links in msg
+    let links: Vec<_> = finder.links(msg).collect();
+
+    // proceed if there's just one link
+    if links.len() == 1 {
+        let url = links.first().unwrap().as_str();
+        let parsed_url = Url::parse(url).ok()?;
+        let netloc = parsed_url.host_str()?;
+
+        // www.youtube.com -> youtube.com; vm.tiktok.com -> tiktok.com etc.
+        let netloc_parts = &netloc.split('.').collect::<Vec<_>>();
+        let whitelist_item = netloc_parts[netloc_parts.len() - 2..].join(".");
+
+        // make sure that the whitelist contains our netloc
+        if WHITELIST.contains(&whitelist_item) {
+            return Some(url);
+        }
+    }
+
+    None
 }
 
-// reads a file from the filesystem
-pub fn read_file(filename: &str) -> Vec<u8> {
-    fs::read(&filename).unwrap()
-}
+/// Downloads a video from an URL in .mp4 format, converting if needed.
+pub async fn download_and_convert(url: &str, dirname: &str, filename: &str) {
+    let mut command = Command::new("yt-dlp");
+    let yt_dlp = command.args(&[
+        "--max-filesize",
+        "50M", // Telegram API limit
+        "--output",
+        &format!("{}/%(title)s.%(ext)s", dirname),
+        url,
+    ]);
 
-// deletes a file from the filesystem
-pub fn delete_file(path: &str) {
-    if file_exists(&path) {
-        fs::remove_file(&path).expect("Couldn't remove file");
+    // run the command and wait for it to finish
+    yt_dlp.status().await.ok();
+
+    let mut files = std::fs::read_dir(dirname)
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    // check if yt-dlp downloaded the video by checking if dir contains a file
+    if files.len() == 1 {
+        let entry = files.pop().unwrap().unwrap();
+        let path = entry.path().to_str().unwrap().to_string();
+
+        let mut command = Command::new("ffmpeg");
+        let ffmpeg = command.args(&[
+            "-i",
+            &path,
+            "-c:v",
+            "libx265",
+            "-pix_fmt",
+            "yuv420p",
+            &format!("{}/{}", dirname, filename),
+        ]);
+
+        // run the command and wait for it to finish
+        ffmpeg.status().await.ok();
     }
 }
