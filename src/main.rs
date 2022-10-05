@@ -79,6 +79,15 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
             "failed to download the video: path {} does not exist",
             full_path_str
         );
+
+        // if in a private chat, send a message
+        if let ChatKind::Private(_) = message.chat.kind {
+            bot.send_message(message.chat.id, "Failed to download the video.")
+                .reply_to_message_id(message.id)
+                .await
+                .log_on_error()
+                .await;
+        }
         return Ok(());
     } else {
         info!("downloaded the video: {}", full_path_str);
