@@ -94,6 +94,7 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
     }
 
     let file = InputFile::file(&full_path);
+    let metadata = utils::probe(full_path_str).unwrap_or_default();
     let chat_id = message.chat.id;
 
     let mut username = None;
@@ -115,31 +116,30 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
 
     let message_with_prefix = format!("{}\n{}", prefix, text);
 
+    let mut request = bot
+        .send_video(chat_id, file)
+        .width(metadata.width)
+        .height(metadata.height)
+        .duration(metadata.duration)
+        .supports_streaming(true);
+
     // if in a private chat, send the video directly
     if let ChatKind::Private(_) = message.chat.kind {
-        let result = bot.send_video(chat_id, file).await;
-
-        if let Err(e) = result {
+        if let Err(e) = request.await {
             error!("failed to send the video: {}", e);
         } else {
             info!("the video has been sent");
         }
-    }
-    // if in a group, send the video with the original message
-    else {
-        // if the message was a reply, send the video as a reply
-        let result = if let Some(reply_to_message) = message.reply_to_message() {
-            bot.send_video(chat_id, file)
-                .reply_to_message_id(reply_to_message.id)
-                .caption(message_with_prefix)
-                .await
-        } else {
-            bot.send_video(chat_id, file)
-                .caption(message_with_prefix)
-                .await
-        };
+    } else {
+        // if in a group, send the video with the original message
+        request = request.caption(message_with_prefix);
 
-        if let Err(e) = result {
+        // if the message was a reply, send the video as a reply
+        if let Some(reply_to_message) = message.reply_to_message() {
+            request = request.reply_to_message_id(reply_to_message.id);
+        }
+
+        if let Err(e) = request.await {
             error!("failed to send the video: {}", e);
         } else {
             // delete the original message

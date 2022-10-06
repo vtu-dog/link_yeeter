@@ -80,7 +80,9 @@ pub async fn download_and_convert(url: &str, dirname: &str, filename: &str) {
             "-i",
             &path,
             "-c:v",
-            "libx265",
+            "libx264",
+            "-movflags",
+            "+faststart",
             "-pix_fmt",
             "yuv420p",
             &format!("{}/{}", dirname, filename),
@@ -88,5 +90,55 @@ pub async fn download_and_convert(url: &str, dirname: &str, filename: &str) {
 
         // run the command and wait for it to finish
         ffmpeg.status().await.ok();
+    }
+}
+
+/// Probe result.
+pub struct Probe {
+    pub duration: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Implements a `Default` trait for `Probe`.
+impl Default for Probe {
+    fn default() -> Self {
+        Self {
+            duration: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+}
+
+/// Probes a video file for its duration, width and height.
+pub fn probe(path: &str) -> Option<Probe> {
+    match ffprobe::ffprobe(path) {
+        Ok(probe) => {
+            let streams = probe.streams;
+            let video_stream = streams
+                .iter()
+                .find(|&s| s.codec_type == Some("video".to_string()));
+
+            if let Some(video_stream) = video_stream {
+                let width = video_stream.width.unwrap_or(0);
+                let height = video_stream.height.unwrap_or(0);
+                let duration = video_stream
+                    .duration
+                    .as_ref()
+                    // awkward conversion
+                    .map(|d| d.parse::<f64>().unwrap_or(0.0) as u32)
+                    .unwrap();
+
+                Some(Probe {
+                    duration,
+                    width: width as u32,
+                    height: height as u32,
+                })
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
     }
 }

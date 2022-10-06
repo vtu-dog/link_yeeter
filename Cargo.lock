@@ -347,6 +347,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffprobe"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5d603974ab029fc75cebf00bfa06c9c6f49a6fb657f4f5f6a9fd6cbd76910a4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "flate2"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -713,10 +723,11 @@ checksum = "329c933548736bc49fd575ee68c89e8be4d260064184389a5b77517cddd99ffb"
 
 [[package]]
 name = "link_yeeter"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "async-process",
  "dotenvy",
+ "ffprobe",
  "futures",
  "linkify",
  "log",
