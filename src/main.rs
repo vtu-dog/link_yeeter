@@ -53,6 +53,8 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
         return Ok(());
     }
 
+    let url = maybe_url.unwrap();
+
     // if the message is forwarded, ignore it
     if message.forward_date().is_some() {
         debug!("message is forwarded");
@@ -62,7 +64,11 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
     // download one video at a time
     MUTEX.lock().await;
 
-    let url = maybe_url.unwrap();
+    let in_private_chat = if let ChatKind::Private(_) = message.chat.kind {
+        true
+    } else {
+        false
+    };
 
     info!("downloading video from {}", url);
 
@@ -72,17 +78,43 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
     let full_path = temp_dir.path().join(&filename);
     let full_path_str = full_path.to_str().unwrap();
 
-    utils::download_and_convert(url, &dir_path, &filename).await;
+    // download the video
+    utils::download(url, &dir_path).await;
+
+    let mut files = std::fs::read_dir(dir_path)
+        .unwrap()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    // check if yt-dlp downloaded the video by checking if dir contains a file
+    if files.len() != 1 {
+        if in_private_chat {
+            bot.send_message(message.chat.id, "Failed to download video.")
+                .reply_to_message_id(message.id)
+                .await
+                .log_on_error()
+                .await;
+        }
+        return Ok(());
+    }
+
+    // get the path...
+    let entry = files.pop().unwrap().unwrap();
+    let file_path = entry.path().to_str().unwrap().to_string();
+
+    info!("video downloaded to {}", file_path);
+
+    // ..and convert the video to mp4
+    utils::convert(&file_path, full_path_str).await;
 
     if !full_path.exists() {
         error!(
-            "failed to download the video: path {} does not exist",
+            "failed to download video: path {} does not exist",
             full_path_str
         );
 
-        // if in a private chat, send a message
-        if let ChatKind::Private(_) = message.chat.kind {
-            bot.send_message(message.chat.id, "Failed to download the video.")
+        if in_private_chat {
+            bot.send_message(message.chat.id, "Failed to convert the video.")
                 .reply_to_message_id(message.id)
                 .await
                 .log_on_error()
@@ -90,7 +122,7 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
         }
         return Ok(());
     } else {
-        info!("downloaded the video: {}", full_path_str);
+        info!("converted the video: {}", full_path_str);
     }
 
     let file = InputFile::file(&full_path);
@@ -124,7 +156,7 @@ async fn handler(message: Message, bot: AutoSend<Bot>) -> HandlerResult {
         .supports_streaming(true);
 
     // if in a private chat, send the video directly
-    if let ChatKind::Private(_) = message.chat.kind {
+    if in_private_chat {
         if let Err(e) = request.await {
             error!("failed to send the video: {}", e);
         } else {

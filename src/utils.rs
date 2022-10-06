@@ -51,8 +51,8 @@ pub fn find_url(msg: &str) -> Option<&str> {
     None
 }
 
-/// Downloads a video from an URL in .mp4 format, converting if needed.
-pub async fn download_and_convert(url: &str, dirname: &str, filename: &str) {
+/// Downloads a video from an URL in .mp4 format.
+pub async fn download(url: &str, dirname: &str) {
     let mut command = Command::new("yt-dlp");
     let yt_dlp = command.args(&[
         "--max-filesize",
@@ -64,33 +64,25 @@ pub async fn download_and_convert(url: &str, dirname: &str, filename: &str) {
 
     // run the command and wait for it to finish
     yt_dlp.status().await.ok();
+}
 
-    let mut files = std::fs::read_dir(dirname)
-        .unwrap()
-        .into_iter()
-        .collect::<Vec<_>>();
+/// Converts a video to .mp4.
+pub async fn convert(input: &str, output: &str) {
+    let mut command = Command::new("ffmpeg");
+    let ffmpeg = command.args(&[
+        "-i",
+        input,
+        "-c:v",
+        "libx264",
+        "-movflags",
+        "+faststart",
+        "-pix_fmt",
+        "yuv420p",
+        output,
+    ]);
 
-    // check if yt-dlp downloaded the video by checking if dir contains a file
-    if files.len() == 1 {
-        let entry = files.pop().unwrap().unwrap();
-        let path = entry.path().to_str().unwrap().to_string();
-
-        let mut command = Command::new("ffmpeg");
-        let ffmpeg = command.args(&[
-            "-i",
-            &path,
-            "-c:v",
-            "libx264",
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-            &format!("{}/{}", dirname, filename),
-        ]);
-
-        // run the command and wait for it to finish
-        ffmpeg.status().await.ok();
-    }
+    // run the command and wait for it to finish
+    ffmpeg.status().await.ok();
 }
 
 /// Probe result.
