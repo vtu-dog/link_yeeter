@@ -33,3 +33,4 @@ teloxide = "0.12.2"
 tempfile = "3.5.0"
 tokio = { version = "1.28.0", features = ["full"] }
 url = "2.3.1"
+which = "4.4.0"

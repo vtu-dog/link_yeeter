@@ -45,8 +45,17 @@ static NETLOCS: Lazy<String> = Lazy::new(|| {
 /// Starts the application.
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // initialise the application, logger included
     dotenv().expect("failed to load .env file");
     simple_log::quick!("info");
+
+    // make sure that the process can access essential binaries
+    ["ffmpeg", "ffprobe", "yt-dlp"].into_iter().for_each(|x| {
+        if which::which(x).is_err() {
+            panic!("failed to find {} in PATH", x);
+        }
+    });
+
     info!("application started");
 
     let bot = Bot::from_env();
