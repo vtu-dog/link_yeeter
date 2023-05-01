@@ -150,32 +150,32 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
     drop(_count);
 
     // send a message if the bot is busy
-    let queue_msg_result = if count >= 2 && in_private_chat {
-        bot.send_message(
-            message.chat.id,
+    let mut queue_msg_id = None;
+
+    // we also don't want to clutter non-private chats
+    if in_private_chat {
+        let msg = if count >= 2 {
             format!(
                 "Request accepted.\nYour position in the queue: {}.",
                 count - 1
-            ),
-        )
-        .reply_to_message_id(message.id)
-        .await
-    } else {
-        bot.send_message(
-            message.chat.id,
-            "Request accepted.\nThe queue is empty, downloading now.".to_string(),
-        )
-        .reply_to_message_id(message.id)
-        .await
-    };
+            )
+        } else {
+            "Request accepted.\nThe queue is empty, downloading now.".to_string()
+        };
 
-    // we'd like to delete the queue message later
-    let queue_msg_id = match queue_msg_result {
-        Ok(x) => Some(x.id),
-        Err(e) => {
-            error!("failed to send queue message: {}", e);
-            None
-        }
+        let queue_msg_result = bot
+            .send_message(message.chat.id, msg)
+            .reply_to_message_id(message.id)
+            .await;
+
+        // we'd like to delete the queue message later
+        queue_msg_id = match queue_msg_result {
+            Ok(x) => Some(x.id),
+            Err(e) => {
+                error!("failed to send queue message: {}", e);
+                None
+            }
+        };
     };
 
     // wait for the mutex to be unlocked
