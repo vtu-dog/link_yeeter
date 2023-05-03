@@ -23,7 +23,7 @@ You'll need to rename `.env_example` to `.env` and populate it with the followin
 - **MAX_FILESIZE**, which is the maximum file size the bot is allowed to download (in megabytes)
 - **MAINTAINER**, which is your Telegram handle; set this to your username if you want users to be able to contact you easily
 
-If you want to run the project locally, you'll need [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://www.ffmpeg.org) in your `PATH`.
+If you want to run the project locally, you'll need [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ffmpeg](https://www.ffmpeg.org) ([ffprobe](https://ffmpeg.org/ffprobe.html) included) in your `PATH`.
 
 ## Additional info
 
