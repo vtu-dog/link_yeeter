@@ -1,22 +1,29 @@
 //! Utility functions used throughout the project.
 
+use std::sync::OnceLock;
+
 use async_process::Command;
 use linkify::{LinkFinder, LinkKind};
-use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
 use teloxide::types::InputFile;
 use url::Url;
 
-// Initalise a whitelist of websites to download from.
-// Format: `site1.com,site2.net,site3.edu`.
-pub static WHITELIST: Lazy<Vec<String>> = Lazy::new(|| {
-    std::env::var("WHITELIST")
-        .expect("WHITELIST environment variable not set")
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
-});
+pub static WHITELIST: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Initialise the whitelist of websites to allow downloads from.
+/// Format: `site1.com,site2.net,site3.edu`.
+pub fn init_statics() {
+    WHITELIST
+        .set(
+            std::env::var("WHITELIST")
+                .expect("WHITELIST environment variable not set")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        )
+        .expect("WHITELIST was already initialised");
+}
 
 /// Obtain a random string of specified length.
 pub fn random_string(size: usize) -> String {
@@ -93,7 +100,12 @@ pub fn get_url_info(msg: &str) -> URLInfo {
 
     let whitelisted_urls = whitelist_items
         .into_iter()
-        .filter(|(_, w)| WHITELIST.contains(w))
+        .filter(|(_, w)| {
+            WHITELIST
+                .get()
+                .expect("WHITELIST not initialised")
+                .contains(w)
+        })
         .collect::<Vec<_>>();
 
     let whitelisted_urls_len = whitelisted_urls.len();

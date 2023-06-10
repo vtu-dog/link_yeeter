@@ -1,6 +1,6 @@
 [package]
 name = "link_yeeter"
-version = "2.3.1"
+version = "2.3.2"
 authors = ["Wojciech Jarząbek <WojciechJarzabek@windowslive.com>"]
 edition = "2021"
 publish = false
@@ -25,12 +25,11 @@ async-process = "1.7.0"
 dotenvy = "0.15.7"
 ffprobe = "0.3.3"
 linkify = "0.9.0"
-log = "0.4.17"
-once_cell = "1.17.1"
+log = "0.4.18"
 rand = "0.8.5"
 simple-log = "1.6.0"
 teloxide = "0.12.2"
-tempfile = "3.5.0"
-tokio = { version = "1.28.0", features = ["full"] }
-url = "2.3.1"
+tempfile = "3.6.0"
+tokio = { version = "1.28.2", features = ["full"] }
+url = "2.4.0"
 which = "4.4.0"

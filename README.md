@@ -27,6 +27,6 @@ If you want to run the project locally, you'll need [yt-dlp](https://github.com/
 
 ## Additional info
 
-The project was tested using Rust 1.69.0 (Stable) on macOS 13.3.1 Ventura.
+The project was tested using Rust 1.70.0 (Stable) on macOS 13.4 Ventura.
 
 Any more questions? Feature suggestions? Contact me [on Telegram](https://t.me/Vyaatu)! Pull requests / GitHub issues are greatly appreciated as well!

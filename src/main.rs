@@ -1,8 +1,9 @@
 //! This is the main file of the application.
 
+use std::sync::OnceLock;
+
 use async_lock::Mutex;
 use dotenvy::dotenv;
-use once_cell::sync::Lazy;
 use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
@@ -15,32 +16,64 @@ extern crate simple_log;
 
 mod utils;
 
-static MAX_FILESIZE: Lazy<u64> = Lazy::new(|| {
-    std::env::var("MAX_FILESIZE")
-        .unwrap_or("250".to_string())
-        .parse()
-        .unwrap_or(250)
-});
+static MAX_FILESIZE: OnceLock<u64> = OnceLock::new();
+static MAINTAINER: OnceLock<String> = OnceLock::new();
+static NETLOCS: OnceLock<String> = OnceLock::new();
+static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+static COUNT: OnceLock<Mutex<u32>> = OnceLock::new();
 
-static MAINTAINER: Lazy<String> = Lazy::new(|| {
-    let temp = std::env::var("MAINTAINER")
-        .map(|x| x.trim().to_string())
-        .unwrap_or_default();
+/// Initialises static variables.
+fn init_statics() {
+    MAX_FILESIZE
+        .set(
+            std::env::var("MAX_FILESIZE")
+                .unwrap_or("250".to_string())
+                .parse()
+                .unwrap_or_else(|_| {
+                    warn!("failed to parse MAX_FILESIZE, using default value");
+                    250
+                }),
+        )
+        .expect("MAX_FILESIZE was already initialised");
 
-    if temp.is_empty() {
-        "the maintainer".to_string()
-    } else {
-        format!("@{}", temp)
-    }
-});
+    MAINTAINER
+        .set({
+            let temp = std::env::var("MAINTAINER")
+                .map(|x| x.trim().to_string())
+                .unwrap_or_default();
 
-static NETLOCS: Lazy<String> = Lazy::new(|| {
-    utils::WHITELIST
-        .iter()
-        .map(|x| format!("`{}`", x))
-        .collect::<Vec<_>>()
-        .join(", ")
-});
+            if temp.is_empty() {
+                warn!("failed to get MAINTAINER, using default value");
+                "the maintainer".to_string()
+            } else {
+                format!("@{}", temp)
+            }
+        })
+        .expect("MAINTAINER was already initialised");
+
+    // initialise the whitelist, as it's used to extract netlocs
+    utils::init_statics();
+
+    NETLOCS
+        .set(
+            utils::WHITELIST
+                .get()
+                .expect("WHITELIST is not initialised")
+                .iter()
+                .map(|x| format!("`{}`", x))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("NETLOCS was already initialised");
+
+    MUTEX
+        .set(Mutex::new(()))
+        .expect("MUTEX was already initialised");
+
+    COUNT
+        .set(Mutex::new(0))
+        .expect("COUNT was already initialised");
+}
 
 /// Starts the application.
 #[tokio::main(flavor = "current_thread")]
@@ -48,6 +81,7 @@ async fn main() {
     // initialise the application, logger included
     dotenv().expect("failed to load .env file");
     simple_log::quick!("info");
+    init_statics();
 
     // make sure that the process can access essential binaries
     ["ffmpeg", "ffprobe", "yt-dlp"].into_iter().for_each(|x| {
@@ -69,9 +103,6 @@ async fn main() {
 
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-static MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-static COUNT: Lazy<Mutex<u32>> = Lazy::new(|| Mutex::new(0));
-
 /// Defines routes for the bot.
 fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>> {
     let call = dptree::entry()
@@ -90,13 +121,19 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
 
 /// Changes COUNT by the specified delta.
 async fn change_count_by(delta: i32) -> HandlerResult {
-    let mut count = COUNT.lock().await;
+    let mut count = COUNT.get().expect("COUNT is not initialised").lock().await;
     *count = (*count as i64 + delta as i64).max(0) as u32;
     Ok(())
 }
 
 /// Handles incoming messages.
 async fn handler(message: Message, bot: Bot) -> HandlerResult {
+    // if the message we received is a pin, ignore it
+    if matches!(message.kind, teloxide::types::MessageKind::Pinned(_)) {
+        debug!("message is a pin, ignoring");
+        return Ok(());
+    }
+
     let in_private_chat = matches!(message.chat.kind, ChatKind::Private(_));
     let text = message.text().unwrap_or_default();
     let url_info = utils::get_url_info(text);
@@ -109,7 +146,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
             debug!("no whitelisted URLs found");
             format!(
                 "No whitelisted URLs found.\n\nSupported netlocs: {}.",
-                *NETLOCS
+                *NETLOCS.get().expect("NETLOCS is not initialised")
             )
         } else {
             debug!("more than one URL found");
@@ -121,7 +158,8 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
                 message.chat.id,
                 format!(
                     "{}\n\nFor more information, please contact {}.",
-                    msg, *MAINTAINER
+                    msg,
+                    *MAINTAINER.get().expect("MAINTAINER is not initialised")
                 )
                 .replace('.', r"\."),
             )
@@ -145,7 +183,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
 
     // we want to download one video at a time
     // first, acquire the counter mutex and get the current count
-    let _count = COUNT.lock().await;
+    let _count = COUNT.get().expect("COUNT is not initialised").lock().await;
     let count = *_count;
     drop(_count);
 
@@ -179,7 +217,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
     };
 
     // wait for the mutex to be unlocked
-    let _guard = MUTEX.lock().await;
+    let _guard = MUTEX.get().expect("MUTEX is not initialised").lock().await;
     info!("downloading video from {}", url);
 
     let filename = format!("{}.mp4", utils::random_string(10));
@@ -241,13 +279,15 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
     let bytes = entry.metadata().unwrap().len();
     let megabytes = bytes / 1000 / 1000;
 
-    if megabytes > *MAX_FILESIZE {
+    let max_filesize = *MAX_FILESIZE.get().expect("MAX_FILESIZE is not initialised");
+
+    if megabytes > max_filesize {
         if in_private_chat {
             bot.send_message(
                 message.chat.id,
                 format!(
                     "Failed to convert video (base file size exceeds {} MB).",
-                    *MAX_FILESIZE
+                    max_filesize
                 ),
             )
             .reply_to_message_id(message.id)
