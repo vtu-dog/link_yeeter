@@ -27,7 +27,7 @@ fn init_statics() {
     MAX_FILESIZE
         .set(
             std::env::var("MAX_FILESIZE")
-                .unwrap_or("250".to_string())
+                .unwrap_or_else(|_| "250".to_string())
                 .parse()
                 .unwrap_or_else(|_| {
                     warn!("failed to parse MAX_FILESIZE, using default value");
@@ -46,7 +46,7 @@ fn init_statics() {
                 warn!("failed to get MAINTAINER, using default value");
                 "the maintainer".to_string()
             } else {
-                format!("@{}", temp)
+                format!("@{temp}")
             }
         })
         .expect("MAINTAINER was already initialised");
@@ -60,7 +60,7 @@ fn init_statics() {
                 .get()
                 .expect("WHITELIST is not initialised")
                 .iter()
-                .map(|x| format!("`{}`", x))
+                .map(|x| format!("`{x}`"))
                 .collect::<Vec<_>>()
                 .join(", "),
         )
@@ -84,11 +84,9 @@ async fn main() {
     init_statics();
 
     // make sure that the process can access essential binaries
-    ["ffmpeg", "ffprobe", "yt-dlp"].into_iter().for_each(|x| {
-        if which::which(x).is_err() {
-            panic!("failed to find {} in PATH", x);
-        }
-    });
+    for x in ["ffmpeg", "ffprobe", "yt-dlp"] {
+        assert!(which::which(x).is_ok(), "failed to find {x} in PATH");
+    }
 
     info!("application started");
 
@@ -122,10 +120,12 @@ fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>>
 /// Changes COUNT by the specified delta.
 async fn change_count_by(delta: i32) -> HandlerResult {
     let mut count = COUNT.get().expect("COUNT is not initialised").lock().await;
-    *count = (*count as i64 + delta as i64).max(0) as u32;
+    *count = u32::try_from((i64::from(*count) + i64::from(delta)).max(0)).unwrap_or(0);
+    drop(count);
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // sorry
 /// Handles incoming messages.
 async fn handler(message: Message, bot: Bot) -> HandlerResult {
     // if the message we received is a pin, ignore it
@@ -157,8 +157,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
             bot.send_message(
                 message.chat.id,
                 format!(
-                    "{}\n\nFor more information, please contact {}.",
-                    msg,
+                    "{msg}\n\nFor more information, please contact {}.",
                     *MAINTAINER.get().expect("MAINTAINER is not initialised")
                 )
                 .replace('.', r"\."),
@@ -183,9 +182,9 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
 
     // we want to download one video at a time
     // first, acquire the counter mutex and get the current count
-    let _count = COUNT.get().expect("COUNT is not initialised").lock().await;
-    let count = *_count;
-    drop(_count);
+    let count_lock = COUNT.get().expect("COUNT is not initialised").lock().await;
+    let count = *count_lock;
+    drop(count_lock);
 
     // send a message if the bot is busy
     let mut queue_msg_id = None;
@@ -232,29 +231,30 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
     // find all files in the directory
     let mut files = std::fs::read_dir(dir_path)
         .unwrap()
-        .filter_map(|x| x.ok())
+        .filter_map(std::result::Result::ok)
         .collect::<Vec<_>>();
 
     // check if yt-dlp downloaded the video by checking if dir contains a file
     if files.len() != 1 {
-        if in_private_chat {
-            let flen = files.len();
-            let msg = if flen == 0 {
-                "no".to_string()
-            } else {
-                flen.to_string()
-            };
-
-            bot.send_message(
-                message.chat.id,
-                format!("Failed to download video ({} files found).", msg),
-            )
-            .reply_to_message_id(message.id)
-            .await
-            .log_on_error()
-            .await;
+        if !in_private_chat {
+            return Ok(());
         }
-        return Ok(());
+
+        let flen = files.len();
+        let msg = if flen == 0 {
+            "no".to_string()
+        } else {
+            flen.to_string()
+        };
+
+        bot.send_message(
+            message.chat.id,
+            format!("Failed to download video ({msg} files found)."),
+        )
+        .reply_to_message_id(message.id)
+        .await
+        .log_on_error()
+        .await;
     }
 
     if !exit_success {
@@ -285,10 +285,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
         if in_private_chat {
             bot.send_message(
                 message.chat.id,
-                format!(
-                    "Failed to convert video (base file size exceeds {} MB).",
-                    max_filesize
-                ),
+                format!("Failed to convert video (base file size exceeds {max_filesize} MB)."),
             )
             .reply_to_message_id(message.id)
             .await
@@ -305,12 +302,15 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
     let original_bitrate = metadata.bitrate;
 
     // calculate the fallback bitrate
-    let fallback_bitrate = if metadata.duration != 0 {
+    let fallback_bitrate: Option<u32> = if metadata.duration != 0 {
         // notice that we reserved 128 kbps for the audio
         // the total bitrate has been reduced by 3% to account for container overhead
-        Some(
-            ((((50 * 8000) as f64 / metadata.duration as f64) - 128.0 - 5.0) * 0.97).floor() as u32,
-        )
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let calculated_bitrate =
+            (((f64::from(50 * 8000) / f64::from(metadata.duration)) - 128.0 - 5.0) * 0.97).floor()
+                as u32;
+
+        Some(calculated_bitrate)
     } else {
         None
     };
@@ -320,7 +320,7 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
 
     let mut reduction_percentage = None;
     if fallback_bitrate.is_some() {
-        let ratio = fallback_bitrate.unwrap() as f64 / original_bitrate as f64;
+        let ratio = f64::from(fallback_bitrate.unwrap()) / f64::from(original_bitrate);
         reduction_percentage = Some((1.0 - ratio) * 100.0);
 
         if ratio < 0.85 {
@@ -339,10 +339,10 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
 
     // first, try to convert the video without adjusting the bitrate
     // (if it seems unlikely that the conversion will fail)
-    let exit_success = if !skip_to_fallback {
-        utils::convert(&file_path, full_path_str, None).await
-    } else {
+    let exit_success = if skip_to_fallback {
         false
+    } else {
+        utils::convert(&file_path, full_path_str, None).await
     };
 
     // if the conversion failed, try to adjust the bitrate
@@ -376,7 +376,9 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
         );
     }
 
-    if !full_path.exists() {
+    if full_path.exists() {
+        info!("video converted successfully");
+    } else {
         error!(
             "failed to download video: path {} does not exist",
             full_path_str
@@ -390,8 +392,6 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
                 .await;
         }
         return Ok(());
-    } else {
-        info!("video converted successfully");
     }
 
     let file = InputFile::file(&full_path);
@@ -410,10 +410,10 @@ async fn handler(message: Message, bot: Bot) -> HandlerResult {
 
     let mut prefix = String::new();
     if let Some(username) = username {
-        prefix = format!("[original poster: {}]", username)
+        prefix = format!("[original poster: {username}]");
     };
 
-    let message_with_prefix = format!("{}\n{}", prefix, text);
+    let message_with_prefix = format!("{prefix}\n{text}");
     let thumbnail = utils::get_thumbnail(full_path_str).await;
 
     let mut request = bot

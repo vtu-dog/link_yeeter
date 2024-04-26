@@ -1,5 +1,20 @@
+# Rust
 **/*.rs.bk
-**/.DS_Store
 /target
 /tmp
+
+# macOS
+**/.DS_Store
+
+# env files
 .env
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml

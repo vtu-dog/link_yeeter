@@ -1,6 +1,6 @@
 //! Utility functions used throughout the project.
 
-use std::sync::OnceLock;
+use std::{ops::Div, sync::OnceLock};
 
 use async_process::Command;
 use linkify::{LinkFinder, LinkKind};
@@ -51,7 +51,7 @@ pub fn get_url_info(msg: &str) -> URLInfo {
     let links: Vec<_> = finder.links(msg).collect();
     let links_len = links.len();
 
-    let links_enumerated = links.into_iter().enumerate().collect::<Vec<_>>();
+    let links_enumerated = links.into_iter().enumerate();
 
     // parse the links and extract the netlocs
     let urls = links_enumerated
@@ -62,41 +62,31 @@ pub fn get_url_info(msg: &str) -> URLInfo {
     let parsed_urls = urls
         .iter()
         .map(|(i, u)| (i, Url::parse(u)))
-        .filter_map(|(i, u)| match u {
-            Ok(u) => Some((i, u)),
-            Err(_) => None,
-        })
-        .collect::<Vec<_>>();
+        .filter_map(|(i, u)| u.map_or(None, |u| Some((i, u))));
 
     let netlocs = parsed_urls
         .into_iter()
-        .map(|(i, u)| (i, u.host_str().map(|s| s.to_string())))
-        .filter_map(|(i, u)| u.map(|u| (i, u)))
-        .collect::<Vec<_>>();
+        .map(|(i, u)| (i, u.host_str().map(std::string::ToString::to_string)))
+        .filter_map(|(i, u)| u.map(|u| (i, u)));
 
     // split the netlocs into parts and extract the last two parts
     // for example, vm.tiktok.com -> tiktok.com
-    let netloc_parts = netlocs
-        .into_iter()
-        .map(|(&i, n)| {
-            let parts = n
-                .split('.')
-                .rev()
-                .take(2)
-                .collect::<Vec<_>>()
-                .iter()
-                .rev()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>();
-            (i, parts)
-        })
-        .collect::<Vec<_>>();
+    let netloc_parts = netlocs.into_iter().map(|(&i, n)| {
+        let parts = n
+            .split('.')
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .iter()
+            .rev()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>();
+
+        (i, parts)
+    });
 
     // check the netlocs against the whitelist
-    let whitelist_items = netloc_parts
-        .into_iter()
-        .map(|(i, n)| (i, n.join(".")))
-        .collect::<Vec<_>>();
+    let whitelist_items = netloc_parts.into_iter().map(|(i, n)| (i, n.join(".")));
 
     let whitelisted_urls = whitelist_items
         .into_iter()
@@ -112,7 +102,7 @@ pub fn get_url_info(msg: &str) -> URLInfo {
 
     URLInfo {
         maybe_url: if whitelisted_urls_len == 1 {
-            let index = whitelisted_urls.get(0).unwrap().0;
+            let index = whitelisted_urls.first().unwrap().0;
             let url = urls.get(index).unwrap().1;
             Some(url.to_string())
         } else {
@@ -129,15 +119,15 @@ pub async fn download(url: &str, dirname: &str) -> bool {
     let yt_dlp = command.args([
         "--no-playlist",
         "--output",
-        &format!("{}/%(id)s.%(ext)s", dirname),
+        &format!("{dirname}/%(id)s.%(ext)s"),
         url,
     ]);
 
     // run the command and wait for it to finish
-    match yt_dlp.status().await {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    }
+    yt_dlp
+        .status()
+        .await
+        .map_or(false, |status| status.success())
 }
 
 /// Probe result.
@@ -173,27 +163,30 @@ pub fn probe(path: &str) -> Option<Probe> {
                 let width = video_stream.width.unwrap_or(0);
                 let height = video_stream.height.unwrap_or(0);
 
-                let bitrate = probe
-                    .format
-                    .bit_rate
-                    .to_owned()
-                    .unwrap_or("0".to_string())
-                    .parse()
-                    .unwrap_or(0) as u32
-                    / 1000;
+                let bitrate = u32::try_from(
+                    probe
+                        .format
+                        .bit_rate
+                        .clone()
+                        .unwrap_or_else(|| "0".to_string())
+                        .parse()
+                        .unwrap_or(0),
+                )
+                .unwrap_or(0)
+                .div(1000);
 
                 let duration = probe
                     .format
                     .try_get_duration()
-                    .and_then(|d| d.ok())
-                    .map(|d| d.as_secs() as u32)
-                    .unwrap_or(0);
+                    .and_then(std::result::Result::ok)
+                    //.map_or(0, |d| d.as_secs() as u32);
+                    .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(0));
 
                 Some(Probe {
                     duration,
                     bitrate,
-                    width: width as u32,
-                    height: height as u32,
+                    width: u32::try_from(width).unwrap_or(0),
+                    height: u32::try_from(height).unwrap_or(0),
                 })
             } else {
                 None
@@ -224,13 +217,13 @@ pub async fn convert(input: &str, output: &str, bitrate: Option<u32>) -> bool {
         "crop=trunc(iw/2)*2:trunc(ih/2)*2",
     ]
     .into_iter()
-    .map(|s| s.to_string())
+    .map(std::string::ToString::to_string)
     .collect::<Vec<_>>();
 
     // add bitrate if specified
     if let Some(bitrate) = bitrate {
         args.push("-b:v".to_string()); // video bitrate
-        args.push(format!("{}k", bitrate));
+        args.push(format!("{bitrate}k"));
     }
 
     args.push(output.to_string());
@@ -239,10 +232,11 @@ pub async fn convert(input: &str, output: &str, bitrate: Option<u32>) -> bool {
     let mut command = Command::new("ffmpeg");
 
     // run the command and wait for it to finish
-    match command.args(&args).status().await {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    }
+    command
+        .args(&args)
+        .status()
+        .await
+        .map_or(false, |status| status.success())
 }
 
 /// Extracts a thumbnail from a video, saving it as a .jpg file and returning its path.
@@ -270,7 +264,7 @@ pub async fn get_thumbnail(video_path: &str) -> Option<InputFile> {
         .await
         .map(|s| s.success());
 
-    if let Ok(true) = exit_code {
+    if matches!(exit_code, Ok(true)) {
         Some(InputFile::file(thumbnail_path))
     } else {
         None
