@@ -16,7 +16,6 @@ use teloxide::{
 };
 use tokio::sync::oneshot;
 
-/// Commands utilised by the bot.
 #[derive(BotCommands, Clone, Debug)]
 #[command(
     rename_rule = "snake_case",
@@ -41,6 +40,10 @@ pub async fn answer_plaintext(
     msg: Message,
     task_manager: TaskManager,
 ) -> color_eyre::Result<()> {
+    if !matches!(msg.chat.kind, teloxide::types::ChatKind::Private(_)) {
+        return Ok(());
+    }
+
     let maybe_msg_text = msg.text();
     let msg_text = maybe_msg_text.unwrap_or_default().to_owned();
     answer_command(bot, msg, Command::Yeet(msg_text), task_manager).await
