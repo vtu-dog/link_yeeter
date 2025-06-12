@@ -1,33 +1,19 @@
 //! Utility functions used throughout the project.
 
-use std::{ops::Div, sync::OnceLock};
+use crate::env;
 
-use async_process::Command;
+use std::ops::Div;
+
+use async_process::{Command, Stdio};
+use color_eyre::eyre::{Context, bail};
 use linkify::{LinkFinder, LinkKind};
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{Rng, distr::Alphanumeric};
 use teloxide::types::InputFile;
 use url::Url;
 
-pub static WHITELIST: OnceLock<Vec<String>> = OnceLock::new();
-
-/// Initialise the whitelist of websites to allow downloads from.
-/// Format: `site1.com,site2.net,site3.edu`.
-pub fn init_statics() {
-    WHITELIST
-        .set(
-            std::env::var("WHITELIST")
-                .expect("WHITELIST environment variable not set")
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-        )
-        .expect("WHITELIST was already initialised");
-}
-
 /// Obtain a random string of specified length.
 pub fn random_string(size: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(size)
         .map(char::from)
@@ -35,102 +21,58 @@ pub fn random_string(size: usize) -> String {
 }
 
 /// Information about URLs found in a message.
-pub struct URLInfo {
-    pub maybe_url: Option<String>,
-    pub total_urls: usize,
-    pub whitelisted_urls: usize,
+pub enum URLsFound {
+    None,
+    One { url: String, supported: bool },
+    Multiple,
 }
 
-/// Parses a message and returns information about URLs found in it.
-pub fn get_url_info(msg: &str) -> URLInfo {
+/// Parse a message and returns information about URLs found inside it.
+pub fn get_url_info(msg: &str) -> URLsFound {
     // create LinkFinder and initialise it with a proper config
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
     // find all the links in msg
     let links: Vec<_> = finder.links(msg).collect();
-    let links_len = links.len();
 
-    let links_enumerated = links.into_iter().enumerate();
-
-    // parse the links and extract the netlocs
-    let urls = links_enumerated
-        .into_iter()
-        .map(|(i, l)| (i, l.as_str()))
+    // parse the links and extract their netlocs
+    let all_urls = links
+        .iter()
+        .flat_map(|u| Url::parse(u.as_str()))
         .collect::<Vec<_>>();
 
-    let parsed_urls = urls
-        .iter()
-        .map(|(i, u)| (i, Url::parse(u)))
-        .filter_map(|(i, u)| u.map_or(None, |u| Some((i, u))));
+    if all_urls.is_empty() {
+        return URLsFound::None;
+    } else if all_urls.len() > 1 {
+        return URLsFound::Multiple;
+    }
 
-    let netlocs = parsed_urls
-        .into_iter()
-        .map(|(i, u)| (i, u.host_str().map(std::string::ToString::to_string)))
-        .filter_map(|(i, u)| u.map(|u| (i, u)));
+    // compare the netloc of a single URL against the allowlist
+    let single_url = all_urls.first().unwrap().to_owned();
 
-    // split the netlocs into parts and extract the last two parts
-    // for example, vm.tiktok.com -> tiktok.com
-    let netloc_parts = netlocs.into_iter().map(|(&i, n)| {
-        let parts = n
+    // bail if host_str not found (for example, in mailto:_)
+    // otherwise, extract netloc and check if it's supported
+    single_url.host_str().map_or(URLsFound::None, |hs| {
+        let netloc = hs
             .split('.')
             .rev()
             .take(2)
             .collect::<Vec<_>>()
-            .iter()
+            .into_iter()
             .rev()
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .join(".");
 
-        (i, parts)
-    });
-
-    // check the netlocs against the whitelist
-    let whitelist_items = netloc_parts.into_iter().map(|(i, n)| (i, n.join(".")));
-
-    let whitelisted_urls = whitelist_items
-        .into_iter()
-        .filter(|(_, w)| {
-            WHITELIST
-                .get()
-                .expect("WHITELIST not initialised")
-                .contains(w)
-        })
-        .collect::<Vec<_>>();
-
-    let whitelisted_urls_len = whitelisted_urls.len();
-
-    URLInfo {
-        maybe_url: if whitelisted_urls_len == 1 {
-            let index = whitelisted_urls.first().unwrap().0;
-            let url = urls.get(index).unwrap().1;
-            Some(url.to_string())
-        } else {
-            None
-        },
-        total_urls: links_len,
-        whitelisted_urls: whitelisted_urls_len,
-    }
+        URLsFound::One {
+            url: single_url.to_string(),
+            supported: env::ALLOWLIST.contains(&netloc),
+        }
+    })
 }
 
-/// Downloads a video from an URL in .mp4 format.
-pub async fn download(url: &str, dirname: &str) -> bool {
-    let mut command = Command::new("yt-dlp");
-    let yt_dlp = command.args([
-        "--no-playlist",
-        "--output",
-        &format!("{dirname}/%(id)s.%(ext)s"),
-        url,
-    ]);
-
-    // run the command and wait for it to finish
-    yt_dlp
-        .status()
-        .await
-        .map_or(false, |status| status.success())
-}
-
-/// Probe result.
+/// `FFprobe` result.
+#[derive(Default)]
 pub struct Probe {
     pub duration: u32,
     pub bitrate: u32,
@@ -138,66 +80,106 @@ pub struct Probe {
     pub height: u32,
 }
 
-/// Implements a `Default` trait for `Probe`.
-impl Default for Probe {
-    fn default() -> Self {
-        Self {
-            duration: 0,
-            bitrate: 0,
-            width: 0,
-            height: 0,
-        }
+/// Probe a video file for its duration, bitrate, width and height.
+pub fn ffprobe(path: &str) -> Option<Probe> {
+    let maybe_probe = ffprobe::ffprobe(path);
+
+    if maybe_probe.is_err() {
+        return None;
     }
+
+    let probe = maybe_probe.unwrap();
+
+    let streams = probe.streams;
+    let video_stream = streams
+        .iter()
+        .find(|&s| s.codec_type == Some("video".to_string()))?;
+
+    let width = video_stream.width.unwrap_or(0);
+    let height = video_stream.height.unwrap_or(0);
+
+    let bitrate = u32::try_from(
+        probe
+            .format
+            .bit_rate
+            .clone()
+            .unwrap_or_else(|| "0".to_string())
+            .parse()
+            .unwrap_or(0),
+    )
+    .unwrap_or(0)
+    .div(1000);
+
+    let duration = probe
+        .format
+        .try_get_duration()
+        .and_then(std::result::Result::ok)
+        .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(0));
+
+    Some(Probe {
+        duration,
+        bitrate,
+        width: u32::try_from(width).unwrap_or(0),
+        height: u32::try_from(height).unwrap_or(0),
+    })
 }
 
-/// Probes a video file for its duration, width and height.
-pub fn probe(path: &str) -> Option<Probe> {
-    match ffprobe::ffprobe(path) {
-        Ok(probe) => {
-            let streams = probe.streams;
-            let video_stream = streams
-                .iter()
-                .find(|&s| s.codec_type == Some("video".to_string()));
-
-            if let Some(video_stream) = video_stream {
-                let width = video_stream.width.unwrap_or(0);
-                let height = video_stream.height.unwrap_or(0);
-
-                let bitrate = u32::try_from(
-                    probe
-                        .format
-                        .bit_rate
-                        .clone()
-                        .unwrap_or_else(|| "0".to_string())
-                        .parse()
-                        .unwrap_or(0),
-                )
-                .unwrap_or(0)
-                .div(1000);
-
-                let duration = probe
-                    .format
-                    .try_get_duration()
-                    .and_then(std::result::Result::ok)
-                    //.map_or(0, |d| d.as_secs() as u32);
-                    .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(0));
-
-                Some(Probe {
-                    duration,
-                    bitrate,
-                    width: u32::try_from(width).unwrap_or(0),
-                    height: u32::try_from(height).unwrap_or(0),
-                })
-            } else {
-                None
-            }
+/// Download a video from an URL.
+pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_eyre::Result<()> {
+    let max_filesize = {
+        if enable_fallback {
+            *env::FALLBACK_FILESIZE
+        } else {
+            *env::MAX_FILESIZE
         }
-        Err(_) => None,
+    };
+
+    let args = [
+        "--ignore-config", // ignore local setup
+        "--no-playlist",
+        "--max-filesize",
+        &format!("{max_filesize}M"),
+        "--add-header", // reddit workaround, hopefully doesn't break other sites
+        "accept:*/*",
+        "--output",
+        &format!("{dirname}/%(id)s.%(ext)s"),
+        url,
+    ];
+
+    // run yt-dlp and wait for it to finish
+    let child = Command::new("yt-dlp")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .wrap_err("failed to spawn yt-dlp")?;
+
+    let output = child.output().await.wrap_err("yt-dlp execution failed")?;
+
+    let file_too_big_msg = "File is larger than max-filesize";
+    let output_str =
+        String::from_utf8_lossy(&output.stderr) + String::from_utf8_lossy(&output.stdout);
+
+    if output_str.contains(file_too_big_msg) {
+        bail!("file size exceeded {} megabytes", max_filesize);
     }
+
+    if !output.status.success() {
+        bail!(
+            "yt-dlp failed with status code {}",
+            output.status.code().unwrap_or(-1),
+        )
+    }
+
+    Ok(())
 }
 
-/// Converts a video to .mp4.
-pub async fn convert(input: &str, output: &str, bitrate: Option<u32>) -> bool {
+/// Convert a video to .mp4 format.
+pub async fn convert(
+    input: &str,
+    output: &str,
+    maybe_bitrate: Option<u32>,
+) -> color_eyre::Result<()> {
     // compose the ffmpeg command arguments
     let mut args = vec![
         "-y", // overwrite output files if they already exist
@@ -213,7 +195,7 @@ pub async fn convert(input: &str, output: &str, bitrate: Option<u32>) -> bool {
         "128k",
         "-fs", // max filesize
         "50M",
-        "-vf", // making sure the video dimensions are even
+        "-vf", // make sure the video dimensions are even
         "crop=trunc(iw/2)*2:trunc(ih/2)*2",
     ]
     .into_iter()
@@ -221,25 +203,35 @@ pub async fn convert(input: &str, output: &str, bitrate: Option<u32>) -> bool {
     .collect::<Vec<_>>();
 
     // add bitrate if specified
-    if let Some(bitrate) = bitrate {
+    if let Some(bitrate) = maybe_bitrate {
         args.push("-b:v".to_string()); // video bitrate
         args.push(format!("{bitrate}k"));
     }
 
     args.push(output.to_string());
 
-    // create a new ffmpeg command
-    let mut command = Command::new("ffmpeg");
-
-    // run the command and wait for it to finish
-    command
+    // run ffmpeg and wait for it to finish
+    let child = Command::new("ffmpeg")
         .args(&args)
-        .status()
-        .await
-        .map_or(false, |status| status.success())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .wrap_err("failed to spawn ffmpeg")?;
+
+    let output = child.output().await.wrap_err("ffmpeg execution failed")?;
+
+    let status = output.status;
+    if !status.success() {
+        bail!(
+            "ffmpeg failed with status code {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+
+    Ok(())
 }
 
-/// Extracts a thumbnail from a video, saving it as a .jpg file and returning its path.
+/// Extract a thumbnail from a video, saving it as a .jpg file and returning its path.
 pub async fn get_thumbnail(video_path: &str) -> Option<InputFile> {
     // get the parent folder of the video and construct the thumbnail path
     let parent_folder = std::path::Path::new(video_path).parent();
@@ -258,8 +250,12 @@ pub async fn get_thumbnail(video_path: &str) -> Option<InputFile> {
             "1",
             "-q:v", // quality of the thumbnail (1-31)
             "3",
+            "-update", // suppress warning
+            "true",
             &thumbnail_path,
         ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .status()
         .await
         .map(|s| s.success());

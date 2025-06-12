@@ -1,0 +1,13 @@
+services:
+  link_yeeter:
+    container_name: link_yeeter
+    restart: on-failure
+    stop_signal: SIGINT
+    build:
+      context: .
+
+    environment:
+      TELOXIDE_TOKEN: your-token
+      ALLOWLIST: youtube.com,x.com
+      MAX_FILESIZE: 250
+      MAINTAINER: your-handle
