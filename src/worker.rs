@@ -18,6 +18,7 @@ use teloxide::types::InputFile;
 use tempfile::TempDir;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, instrument};
 
 /// A worker that processes download tasks.
 pub struct Worker {
@@ -50,12 +51,12 @@ impl Worker {
         let busy_inner = Arc::clone(&self.is_busy);
 
         tokio::spawn(async move {
-            tracing::debug!("worker started");
+            debug!("worker started");
             loop {
                 select! {
                     biased; // always go for token first
                     () = cancellation_token.cancelled() => {
-                        tracing::debug!("worker cancelled");
+                        debug!("worker cancelled");
                         break;
                     }
                     task = queue_inner.pop() => {
@@ -66,7 +67,7 @@ impl Worker {
                     }
                 }
             }
-            tracing::debug!("worker stopped");
+            debug!("worker stopped");
         })
     }
 
@@ -78,11 +79,12 @@ impl Worker {
             .send(res.map(std::boxed::Box::new).map_err(|x| x.to_string()))
         {
             Ok(()) => (),
-            Err(_e) => tracing::error!("failed to send task result: channel closed"),
+            Err(_e) => error!("failed to send task result: channel closed"),
         }
     }
 
     /// Handle a download task.
+    #[instrument(level = "debug")]
     async fn handle_task_internal(task: &Task) -> color_eyre::Result<TaskOutput> {
         // prepare a temp arena for files
         let temp_dir = TempDir::new().wrap_err("could not create temp dir")?;
@@ -149,7 +151,7 @@ impl Worker {
         if let Some(max_api_br) = max_bitrate {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let cutoff = (f64::from(original_bitrate) * 0.85) as u32;
-            if max_api_br < cutoff {
+            if max_api_br < cutoff && !task.enable_fallback {
                 bail!("API-adjusted bitrate is too low");
             }
         }

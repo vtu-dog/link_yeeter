@@ -7,6 +7,7 @@ services:
       context: .
 
     environment:
+      RUST_LOG: none,link_yeeter=info # use "none,link_yeeter=debug" for debugging
       TELOXIDE_TOKEN: your-token
       ALLOWLIST: youtube.com,x.com
       MAX_FILESIZE: 250

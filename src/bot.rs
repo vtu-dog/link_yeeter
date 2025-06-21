@@ -9,6 +9,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use futures::future::BoxFuture;
 use teloxide::{dispatching::UpdateHandler, error_handlers::ErrorHandler, prelude::*};
+use tracing::{debug, error};
 
 /// Start the bot.
 pub async fn start() {
@@ -23,17 +24,18 @@ pub async fn start() {
         .distribution_function(|_| None::<std::convert::Infallible>) // always process in parallel
         .dependencies(dptree::deps![task_manager_public])
         .error_handler(TracingErrorHandler::new())
+        .default_handler(async |_| {})
         .enable_ctrlc_handler()
         .build();
 
     // start the task manager, and the dispatcher
     task_manager_inner.start();
 
-    tracing::debug!("dispatcher started");
+    debug!("dispatcher started");
     tokio::select! {
         () = dispatcher.dispatch() => {
             task_manager_inner.stop();
-            tracing::debug!("dispatcher stopped");
+            debug!("dispatcher stopped");
         }
     }
 }
@@ -47,7 +49,10 @@ fn schema() -> UpdateHandler<color_eyre::Report> {
                     .filter_command::<Command>()
                     .endpoint(commands::answer_command),
             )
-            .branch(dptree::endpoint(commands::answer_plaintext)),
+            .branch(
+                dptree::filter(|msg: Message| msg.chat.is_private())
+                    .endpoint(commands::answer_plaintext),
+            ),
     )
 }
 
@@ -65,7 +70,7 @@ where
     E: Debug,
 {
     fn handle_error(self: Arc<Self>, error: E) -> BoxFuture<'static, ()> {
-        tracing::error!("{error:#?}");
+        error!("{error:#?}");
         Box::pin(async {})
     }
 }

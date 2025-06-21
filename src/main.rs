@@ -19,6 +19,7 @@ async fn main() {
 
     // initialise tracing itself
     tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         // change the timestamp format to something human-readable
         .with_timer({
             let time_format = time::format_description::parse_borrowed::<2>(

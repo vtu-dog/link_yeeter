@@ -9,6 +9,7 @@ use color_eyre::eyre::{Context, bail};
 use linkify::{LinkFinder, LinkKind};
 use rand::{Rng, distr::Alphanumeric};
 use teloxide::types::InputFile;
+use tracing::{debug, debug_span};
 use url::Url;
 
 /// Obtain a random string of specified length.
@@ -21,6 +22,7 @@ pub fn random_string(size: usize) -> String {
 }
 
 /// Information about URLs found in a message.
+#[derive(Debug)]
 pub enum URLsFound {
     None,
     One { url: String, supported: bool },
@@ -72,7 +74,7 @@ pub fn get_url_info(msg: &str) -> URLsFound {
 }
 
 /// `FFprobe` result.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Probe {
     pub duration: u32,
     pub bitrate: u32,
@@ -156,6 +158,17 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_
 
     let output = child.output().await.wrap_err("yt-dlp execution failed")?;
 
+    let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+
+    if !stdout_str.is_empty() {
+        debug_span!("yt-dlp", "stdout").in_scope(|| debug!("{}", stdout_str));
+    }
+
+    if !stderr_str.is_empty() {
+        debug_span!("yt-dlp", "stderr").in_scope(|| debug!("{}", stderr_str));
+    }
+
     let file_too_big_msg = "File is larger than max-filesize";
     let output_str =
         String::from_utf8_lossy(&output.stderr) + String::from_utf8_lossy(&output.stdout);
@@ -219,6 +232,17 @@ pub async fn convert(
         .wrap_err("failed to spawn ffmpeg")?;
 
     let output = child.output().await.wrap_err("ffmpeg execution failed")?;
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+
+    if !stdout_str.is_empty() {
+        debug_span!("ffmpeg", "stdout").in_scope(|| debug!("{}", stdout_str));
+    }
+
+    if !stderr_str.is_empty() {
+        debug_span!("ffmpeg", "stderr").in_scope(|| debug!("{}", stderr_str));
+    }
 
     let status = output.status;
     if !status.success() {

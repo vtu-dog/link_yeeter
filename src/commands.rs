@@ -11,7 +11,7 @@ use color_eyre::eyre::{Context, bail};
 use teloxide::{
     prelude::*,
     sugar::request::RequestReplyExt,
-    types::{MessageKind, ParseMode},
+    types::{MessageId, MessageKind, ParseMode},
     utils::command::BotCommands,
 };
 use tokio::sync::oneshot;
@@ -40,10 +40,6 @@ pub async fn answer_plaintext(
     msg: Message,
     task_manager: TaskManager,
 ) -> color_eyre::Result<()> {
-    if !matches!(msg.chat.kind, teloxide::types::ChatKind::Private(_)) {
-        return Ok(());
-    }
-
     let maybe_msg_text = msg.text();
     let msg_text = maybe_msg_text.unwrap_or_default().to_owned();
     answer_command(bot, msg, Command::Yeet(msg_text), task_manager).await
@@ -97,15 +93,19 @@ async fn handle_answer(
             .replace('_', r"\_")
     };
 
-    let send_msg = async |text: String| -> color_eyre::Result<()> {
-        bot.send_message(msg.chat.id, sanitise(&text))
-            .reply_to(msg.id)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await
-            .wrap_err("failed to send message")?;
+    let send_msg_with_reply =
+        async |text: String, reply_to_id: MessageId| -> color_eyre::Result<()> {
+            bot.send_message(msg.chat.id, sanitise(&text))
+                .reply_to(reply_to_id)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await
+                .wrap_err("failed to send message")?;
 
-        Ok(())
-    };
+            Ok(())
+        };
+
+    let send_msg =
+        async |text: String| -> color_eyre::Result<()> { send_msg_with_reply(text, msg.id).await };
 
     match answer {
         Answer::Nothing => Ok(()),
@@ -144,11 +144,12 @@ async fn handle_answer(
                 request = request.thumbnail(thumb);
             }
 
+            let video_msg_id = request.await.wrap_err("failed to send video")?.id;
+
             if let Some(caption) = maybe_caption {
-                request = request.caption(sanitise(&caption));
+                send_msg_with_reply(caption, video_msg_id).await?;
             }
 
-            request.await.wrap_err("failed to send video")?;
             Ok(())
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "link_yeeter"
-version = "3.0.1"
+version = "3.0.2"
 authors = ["Wojciech Jarząbek <WojciechJarzabek@windowslive.com>"]
 edition = "2024"
 publish = false
@@ -29,7 +29,7 @@ pedantic = { level = "warn", priority = -1 }
 
 [dependencies]
 # bot runtime
-teloxide = { version = "0.15.0", features = ["macros"] }
+teloxide = { version = "0.16.0", features = ["macros"] }
 tokio = { version = "1.45.1", features = ["full"] }
 
 # async utilities
@@ -53,4 +53,4 @@ chrono = "0.4.41"
 color-eyre = "0.6.5"
 time = { version = "0.3.41", features = ["formatting", "local-offset"] }
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["time"] }
+tracing-subscriber = { version = "0.3.19", features = ["time", "env-filter"] }

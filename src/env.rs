@@ -22,9 +22,9 @@ pub static MAINTAINER: LazyLock<Option<String>> =
 pub static MAX_FILESIZE: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("MAX_FILESIZE")
         .ok()
-        .map(|s| s.parse().unwrap_or(250))
+        .map(|s| s.parse().unwrap_or(200))
         .unwrap()
 });
 
 /// Maximum file size allowed when in fallback mode.
-pub static FALLBACK_FILESIZE: LazyLock<u64> = LazyLock::new(|| *MAX_FILESIZE * 2);
+pub static FALLBACK_FILESIZE: LazyLock<u64> = LazyLock::new(|| *MAX_FILESIZE * 5);
