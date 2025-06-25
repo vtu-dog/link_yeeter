@@ -1,6 +1,6 @@
 [package]
 name = "link_yeeter"
-version = "3.0.2"
+version = "3.1.0"
 authors = ["Wojciech Jarząbek <WojciechJarzabek@windowslive.com>"]
 edition = "2024"
 publish = false

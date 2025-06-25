@@ -157,12 +157,11 @@ async fn handle_answer(
 
 /// Starting point for answering a `Command`.
 fn answer_entrypoint(msg: &Message, cmd: &Command, task_manager: &TaskManager) -> Answer {
-    let is_private_chat = msg.chat.is_private();
-    let is_forward = msg.forward_date().is_some();
-
     // 1. do not react to pins, polls, etc.
     // 2. bail if forwarded to a non-private chat
-    if !matches!(msg.kind, MessageKind::Common(_)) || (!is_private_chat && is_forward) {
+    if !matches!(msg.kind, MessageKind::Common(_))
+        || (!msg.chat.is_private() && msg.forward_date().is_some())
+    {
         return Answer::Nothing;
     }
 
@@ -200,7 +199,8 @@ fn answer_entrypoint(msg: &Message, cmd: &Command, task_manager: &TaskManager) -
     let (Command::Yeet(msg_text) | Command::YeetPlz(msg_text)) = cmd else {
         unreachable!()
     };
-    let urls_found = utils::get_url_info(msg_text);
+
+    let urls_found = extract_urls(msg, msg_text);
 
     let maybe_error_msg = match &urls_found {
         URLsFound::None => Some("No URLs found.".to_string()),
@@ -254,6 +254,41 @@ fn answer_entrypoint(msg: &Message, cmd: &Command, task_manager: &TaskManager) -
         accept_message,
         url,
         enable_fallback: fallback_enabled,
+    }
+}
+
+/// Search for URLs in a message, optionally falling back to one it's replying to.
+fn extract_urls(msg: &Message, msg_text: &str) -> URLsFound {
+    let maybe_original_msg_url = utils::get_url_info(msg_text);
+
+    // case 1: original message contains a single URL
+    if matches!(maybe_original_msg_url, URLsFound::One { .. }) {
+        return maybe_original_msg_url;
+    }
+
+    // case 2: let's look at the message that the original is replying to
+    // will not work if the bot is in privacy mode: https://core.telegram.org/bots/features#privacy-mode
+    let in_reply_to = if let MessageKind::Common(mc) = &msg.kind {
+        mc.reply_to_message
+            .as_ref()
+            .and_then(|reply| reply.text())
+            .map(std::string::ToString::to_string)
+    } else {
+        // don't unwrap other message kinds
+        return maybe_original_msg_url;
+    };
+
+    // no reply, bail
+    if in_reply_to.is_none() {
+        return maybe_original_msg_url;
+    }
+
+    let maybe_reply_url = utils::get_url_info(&in_reply_to.unwrap());
+
+    if matches!(maybe_reply_url, URLsFound::One { .. }) {
+        maybe_reply_url
+    } else {
+        maybe_original_msg_url
     }
 }
 
