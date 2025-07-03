@@ -1,6 +1,6 @@
 [package]
 name = "link_yeeter"
-version = "3.1.0"
+version = "3.1.1"
 authors = ["Wojciech Jarząbek <WojciechJarzabek@windowslive.com>"]
 edition = "2024"
 publish = false
@@ -30,7 +30,7 @@ pedantic = { level = "warn", priority = -1 }
 [dependencies]
 # bot runtime
 teloxide = { version = "0.16.0", features = ["macros"] }
-tokio = { version = "1.45.1", features = ["full"] }
+tokio = { version = "1.46.0", features = ["full"] }
 
 # async utilities
 async-fs = "2.1.2"

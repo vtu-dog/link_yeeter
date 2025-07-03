@@ -136,17 +136,24 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_
         }
     };
 
-    let args = [
+    let max_filesize_str = format!("{max_filesize}M");
+    let output_str = format!("{dirname}/%(id)s.%(ext)s");
+
+    let mut args = vec![
         "--ignore-config", // ignore local setup
         "--no-playlist",
         "--max-filesize",
-        &format!("{max_filesize}M"),
-        "--add-header", // reddit workaround, hopefully doesn't break other sites
-        "accept:*/*",
-        "--output",
-        &format!("{dirname}/%(id)s.%(ext)s"),
-        url,
+        &max_filesize_str,
     ];
+
+    if url.starts_with("https://www.reddit.com") {
+        args.push("--add-header");
+        args.push("accept:*/*");
+    }
+
+    args.push("--output");
+    args.push(&output_str);
+    args.push(url);
 
     // run yt-dlp and wait for it to finish
     let child = Command::new("yt-dlp")
