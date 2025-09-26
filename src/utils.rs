@@ -5,7 +5,7 @@ use crate::env;
 use std::ops::Div;
 
 use async_process::{Command, Stdio};
-use color_eyre::eyre::{Context, bail};
+use color_eyre::eyre::{self, Context, bail};
 use linkify::{LinkFinder, LinkKind};
 use rand::{Rng, distr::Alphanumeric};
 use teloxide::types::InputFile;
@@ -24,8 +24,11 @@ pub fn random_string(size: usize) -> String {
 /// Information about URLs found in a message.
 #[derive(Debug)]
 pub enum URLsFound {
+    /// No URLs found.
     None,
+    /// One URL found.
     One { url: String, supported: bool },
+    /// Multiple URLs found.
     Multiple,
 }
 
@@ -76,9 +79,13 @@ pub fn get_url_info(msg: &str) -> URLsFound {
 /// `FFprobe` result.
 #[derive(Default, Debug)]
 pub struct Probe {
+    /// Duration of the video in seconds.
     pub duration: u32,
+    /// Bitrate of the video in kbps.
     pub bitrate: u32,
+    /// Width of the video in pixels.
     pub width: u32,
+    /// Height of the video in pixels.
     pub height: u32,
 }
 
@@ -127,7 +134,7 @@ pub fn ffprobe(path: &str) -> Option<Probe> {
 }
 
 /// Download a video from an URL.
-pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_eyre::Result<()> {
+pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::Result<()> {
     let max_filesize = {
         if enable_fallback {
             *env::FALLBACK_FILESIZE
@@ -146,6 +153,8 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_
         &max_filesize_str,
     ];
 
+    // reddit workaround, still needed as of v2025.09.05
+    // TODO: add generic handling for other sites?
     if url.starts_with("https://www.reddit.com") {
         args.push("--add-header");
         args.push("accept:*/*");
@@ -195,11 +204,7 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> color_
 }
 
 /// Convert a video to .mp4 format.
-pub async fn convert(
-    input: &str,
-    output: &str,
-    maybe_bitrate: Option<u32>,
-) -> color_eyre::Result<()> {
+pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> eyre::Result<()> {
     // compose the ffmpeg command arguments
     let mut args = vec![
         "-y", // overwrite output files if they already exist

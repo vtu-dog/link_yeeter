@@ -6,10 +6,15 @@ use tokio::sync::oneshot;
 
 /// Represents the output of a processed `Task`.
 pub struct TaskOutput {
-    pub _dir: TempDir, // passed around to defer drop
+    /// Handle to a directory containing video files, passed around to defer `Drop`.
+    pub _dir: TempDir,
+    /// Contents of a file to be uploaded.
     pub video_file: InputFile,
+    /// Thumbnail, if able to be extracted.
     pub maybe_thumbnail: Option<InputFile>,
+    /// Metadata of the video file.
     pub metadata: crate::utils::Probe,
+    /// Either `None`, or reduced bitrate value.
     pub reduced_bitrate: Option<u32>,
 }
 
@@ -38,7 +43,10 @@ pub type TaskResult = Result<Box<TaskOutput>, String>;
 /// A task created by a user, to be processed by a `Worker` and sent back.
 #[derive(Debug)]
 pub struct Task {
+    /// URL of the video to be processed.
     pub url: String,
+    /// Whether to enable fallback processing.
     pub enable_fallback: bool,
+    /// Channel to send the result back to the sender.
     pub return_channel: oneshot::Sender<TaskResult>,
 }

@@ -10,5 +10,5 @@ services:
       RUST_LOG: none,link_yeeter=info # use "none,link_yeeter=debug" for debugging
       TELOXIDE_TOKEN: your-token
       ALLOWLIST: youtube.com,x.com
-      MAX_FILESIZE: 250
+      MAX_FILESIZE: 200
       MAINTAINER: your-handle

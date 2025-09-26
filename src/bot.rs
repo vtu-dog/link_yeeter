@@ -41,7 +41,7 @@ pub async fn start() {
 }
 
 /// Define routes for the bot.
-fn schema() -> UpdateHandler<color_eyre::Report> {
+fn schema() -> UpdateHandler<color_eyre::eyre::Report> {
     dptree::entry().chain(
         Update::filter_message()
             .branch(

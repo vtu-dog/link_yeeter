@@ -7,7 +7,7 @@ use crate::{
     utils::{self, URLsFound},
 };
 
-use color_eyre::eyre::{Context, bail};
+use color_eyre::eyre::{self, Context, bail};
 use teloxide::{
     prelude::*,
     sugar::request::RequestReplyExt,
@@ -39,27 +39,10 @@ pub async fn answer_plaintext(
     bot: Bot,
     msg: Message,
     task_manager: TaskManager,
-) -> color_eyre::Result<()> {
+) -> eyre::Result<()> {
     let maybe_msg_text = msg.text();
     let msg_text = maybe_msg_text.unwrap_or_default().to_owned();
     answer_command(bot, msg, Command::Yeet(msg_text), task_manager).await
-}
-
-/// Possible answers to a command.
-enum Answer {
-    Nothing,
-    SendMessage {
-        text: String,
-    },
-    StartDownload {
-        accept_message: String,
-        url: String,
-        enable_fallback: bool,
-    },
-    SendVideo {
-        contents: Box<TaskOutput>,
-        maybe_caption: Option<String>,
-    },
 }
 
 /// Answer a `Command`, starting with the entrypoint.
@@ -68,7 +51,7 @@ pub async fn answer_command(
     msg: Message,
     cmd: Command,
     task_manager: TaskManager,
-) -> color_eyre::Result<()> {
+) -> eyre::Result<()> {
     Box::pin(handle_answer(
         &bot,
         &msg,
@@ -78,13 +61,40 @@ pub async fn answer_command(
     .await
 }
 
+/// Possible answers to a command.
+enum Answer {
+    /// Terminate communication.
+    Nothing,
+    /// Send a text message.
+    SendMessage {
+        /// Text to send.
+        text: String,
+    },
+    /// Initiate the download process.
+    StartDownload {
+        /// Message to send when download starts.
+        accept_message: String,
+        /// URL to download.
+        url: String,
+        /// Whether to enable fallback mode.
+        enable_fallback: bool,
+    },
+    /// Initiate the video upload process.
+    SendVideo {
+        /// Contents of the video message.
+        contents: Box<TaskOutput>,
+        /// Optional caption for the video.
+        maybe_caption: Option<String>,
+    },
+}
+
 /// Internal implementation of answering a `Command`.
 async fn handle_answer(
     bot: &Bot,
     msg: &Message,
     task_manager: &TaskManager,
     answer: Answer,
-) -> color_eyre::Result<()> {
+) -> eyre::Result<()> {
     let sanitise = |text: &str| {
         text.replace('.', r"\.")
             .replace('(', r"\(")
@@ -93,19 +103,18 @@ async fn handle_answer(
             .replace('_', r"\_")
     };
 
-    let send_msg_with_reply =
-        async |text: String, reply_to_id: MessageId| -> color_eyre::Result<()> {
-            bot.send_message(msg.chat.id, sanitise(&text))
-                .reply_to(reply_to_id)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await
-                .wrap_err("failed to send message")?;
+    let send_msg_with_reply = async |text: String, reply_to_id: MessageId| -> eyre::Result<()> {
+        bot.send_message(msg.chat.id, sanitise(&text))
+            .reply_to(reply_to_id)
+            .parse_mode(ParseMode::MarkdownV2)
+            .await
+            .wrap_err("failed to send message")?;
 
-            Ok(())
-        };
+        Ok(())
+    };
 
     let send_msg =
-        async |text: String| -> color_eyre::Result<()> { send_msg_with_reply(text, msg.id).await };
+        async |text: String| -> eyre::Result<()> { send_msg_with_reply(text, msg.id).await };
 
     match answer {
         Answer::Nothing => Ok(()),
@@ -237,8 +246,8 @@ fn answer_entrypoint(msg: &Message, cmd: &Command, task_manager: &TaskManager) -
         return Answer::SendMessage { text: final_msg };
     }
 
-    // proceed to download routine
-    let queue_position = task_manager.get_queue_size();
+    // proceed to download routine by registering a tentative task
+    let queue_position = task_manager.tentative_enqueue();
 
     let accept_message = if queue_position == 0 {
         "Request accepted.\nThe queue is empty, downloading now.".to_string()
@@ -297,7 +306,7 @@ async fn download(
     task_manager: &TaskManager,
     url: &str,
     enable_fallback: bool,
-) -> color_eyre::Result<Answer> {
+) -> eyre::Result<Answer> {
     let (tx, rx) = oneshot::channel::<TaskResult>();
 
     task_manager.enqueue_task(Task {

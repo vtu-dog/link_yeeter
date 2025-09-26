@@ -1,4 +1,4 @@
-FROM rust:1.87 AS builder
+FROM rust:1.90 AS builder
 WORKDIR /usr/src/link_yeeter
 COPY . .
 RUN cargo build --release

@@ -27,6 +27,6 @@ Alternatively, you can use Docker (`compose-example.yaml` doubles as an env file
 
 ## Additional info
 
-The project was tested using Rust 1.87.0 (Stable) on macOS 15.5 Sequoia (arm64).
+The project was tested using Rust 1.90.0 (Stable) on macOS 26.0 Tahoe (arm64).
 
 Any more questions? Feature suggestions? Contact me [on Telegram](https://t.me/Vyaatu)! Pull requests / GitHub issues are greatly appreciated as well!

@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// The allowlist of websites to permit downloads from.
-/// Env var format: `site1.com,site2.net,site3.edu`.
+///
+/// Format: `site1.com,site2.net,site3.edu`.
 pub static ALLOWLIST: LazyLock<HashSet<String>> = LazyLock::new(|| {
     std::env::var("ALLOWLIST")
         .unwrap_or_default()
@@ -18,7 +19,7 @@ pub static ALLOWLIST: LazyLock<HashSet<String>> = LazyLock::new(|| {
 pub static MAINTAINER: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("MAINTAINER").ok().map(|s| format!("@{s}")));
 
-/// Maximum file size allowed for processing, in megabytes.
+/// Maximum file size allowed for processing, in megabytes (default: 200 MB).
 pub static MAX_FILESIZE: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("MAX_FILESIZE")
         .ok()

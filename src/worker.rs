@@ -6,12 +6,9 @@ use crate::{
     utils,
 };
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
-use color_eyre::eyre::{WrapErr, bail};
+use color_eyre::eyre::{self, WrapErr, bail};
 use deadqueue::unlimited::Queue;
 use futures::StreamExt;
 use teloxide::types::InputFile;
@@ -22,8 +19,18 @@ use tracing::{debug, error, instrument};
 
 /// A worker that processes download tasks.
 pub struct Worker {
+    /// Queue of tasks to be processed.
     queue: Arc<Queue<Task>>,
-    pub is_busy: Arc<AtomicBool>,
+    /// Internal state of the worker.
+    state: Arc<std::sync::Mutex<InternalState>>,
+}
+
+/// Internal `Worker` state.
+struct InternalState {
+    /// Counter for tentatively accepted tasks not yet in the queue.
+    tentative: usize,
+    /// Flag indicating whether the worker is currently processing a task.
+    is_busy: bool,
 }
 
 impl Worker {
@@ -31,24 +38,47 @@ impl Worker {
     pub fn new() -> Self {
         Self {
             queue: Arc::new(Queue::new()),
-            is_busy: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(std::sync::Mutex::new(InternalState {
+                tentative: 0,
+                is_busy: false,
+            })),
         }
     }
 
-    /// Get the size of the queue.
+    /// Get the current size of the queue, then add `val` to tentative task counter.
+    fn fetch_add_queue_size(&self, val: usize) -> usize {
+        let mut st = self.state.lock().unwrap();
+
+        let qsize = self.queue.len() // basic queue size
+            + st.tentative // tentatively accepted, not yet in the queue
+            + usize::from(st.is_busy); // +1 for current task, if busy
+
+        st.tentative += val;
+        qsize
+    }
+
+    /// Get the current size of the queue.
     pub fn queue_size(&self) -> usize {
-        self.queue.len()
+        self.fetch_add_queue_size(0)
+    }
+
+    /// Get the current size of the queue and increment the tentative task counter by 1.
+    pub fn tentative_enqueue(&self) -> usize {
+        self.fetch_add_queue_size(1)
     }
 
     /// Push a task onto the queue.
+    #[allow(clippy::significant_drop_tightening)] // late drop ensures consistency
     pub fn push(&self, item: Task) {
+        let mut st = self.state.lock().unwrap();
+        st.tentative -= 1;
         self.queue.push(item);
     }
 
     /// Start the worker.
     pub fn start(&self, cancellation_token: CancellationToken) -> tokio::task::JoinHandle<()> {
         let queue_inner = self.queue.clone();
-        let busy_inner = Arc::clone(&self.is_busy);
+        let state_inner = Arc::clone(&self.state);
 
         tokio::spawn(async move {
             debug!("worker started");
@@ -60,10 +90,9 @@ impl Worker {
                         break;
                     }
                     task = queue_inner.pop() => {
-                        let ord = Ordering::Release;
-                        busy_inner.store(true, ord);
+                        state_inner.lock().unwrap().is_busy = true;
                         Self::handle_task(task).await;
-                        busy_inner.store(false, ord);
+                        state_inner.lock().unwrap().is_busy = false;
                     }
                 }
             }
@@ -85,7 +114,7 @@ impl Worker {
 
     /// Handle a download task.
     #[instrument(level = "debug")]
-    async fn handle_task_internal(task: &Task) -> color_eyre::Result<TaskOutput> {
+    async fn handle_task_internal(task: &Task) -> eyre::Result<TaskOutput> {
         // prepare a temp arena for files
         let temp_dir = TempDir::new().wrap_err("could not create temp dir")?;
         let output_dir_path = TempDir::path(&temp_dir);
