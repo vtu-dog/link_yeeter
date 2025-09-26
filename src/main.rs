@@ -27,11 +27,7 @@ async fn main() {
         .with_env_filter(
             // default: INFO, can be overridden by changing RUST_LOG environment variable
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(
-                    "none,link_yeeter=info"
-                        .parse()
-                        .expect("default directive should be valid"),
-                )
+                .with_default_directive("info".parse().expect("default directive should be valid"))
                 .from_env_lossy(),
         )
         // change the timestamp format to something human-readable
