@@ -60,6 +60,7 @@ fn schema() -> UpdateHandler<color_eyre::eyre::Report> {
 struct TracingErrorHandler {}
 
 impl TracingErrorHandler {
+    /// Create a new instance of `TracingErrorHandler`.
     fn new() -> Arc<Self> {
         Arc::new(Self {})
     }

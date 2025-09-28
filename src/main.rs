@@ -8,7 +8,8 @@ mod task_manager;
 mod utils;
 mod worker;
 
-/// Start the application.
+use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     // load environment variables (.env file takes precedence)
@@ -26,8 +27,8 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             // default: INFO, can be overridden by changing RUST_LOG environment variable
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive("info".parse().expect("default directive should be valid"))
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
         // change the timestamp format to something human-readable

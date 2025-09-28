@@ -21,15 +21,21 @@ use tokio::sync::oneshot;
     rename_rule = "snake_case",
     description = "The following commands are supported:"
 )]
+/// Commands accepted by the bot.
 pub enum Command {
+    /// Display a help message.
     #[command(description = "display this text.", aliases = ["start"])]
     Help,
+    /// Display the current status of the bot.
     #[command(description = "display the current status of the bot.")]
     Status,
+    /// Download a video (no fallback).
     #[command(description = "download a video from a supported website.")]
     Yeet(String),
+    /// Download a video (with fallback).
     #[command(description = "try to download a video using fallback methods (bypasses allowlist).", aliases = ["yeet_pls", "plz", "pls"], hide_aliases)]
     YeetPlz(String),
+    /// Display a list of all supported websites.
     #[command(description = "list all supported websites.")]
     Allowlist,
 }

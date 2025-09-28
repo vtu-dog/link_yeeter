@@ -27,7 +27,12 @@ pub enum URLsFound {
     /// No URLs found.
     None,
     /// One URL found.
-    One { url: String, supported: bool },
+    One {
+        /// The URL found.
+        url: String,
+        /// Whether the URL is in the allowlist.
+        supported: bool,
+    },
     /// Multiple URLs found.
     Multiple,
 }
