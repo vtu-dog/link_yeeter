@@ -8,7 +8,10 @@ mod task_manager;
 mod utils;
 mod worker;
 
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+use tracing_forest::ForestLayer;
+use tracing_subscriber::{
+    EnvFilter, filter::LevelFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -20,40 +23,38 @@ async fn main() {
         assert!(which::which(bin).is_ok(), "{bin} should be in PATH");
     }
 
-    // initialise color support for tracing
-    color_eyre::install().expect("color_eyre::install() should not be called multiple times");
+    // initialise tracing
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
 
-    // initialise tracing itself
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            // default: INFO, can be overridden by changing RUST_LOG environment variable
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        // change the timestamp format to something human-readable
-        .with_timer({
-            let time_format = time::format_description::parse_borrowed::<2>(
-                "[year]-[month padding:zero]-[day padding:zero] [hour]:[minute]:[second]",
-            )
-            .expect("time format should be valid");
-
-            let utc_offset = time::UtcOffset::from_hms(
-                (chrono::Local::now().offset().local_minus_utc() / 3600)
-                    .try_into()
-                    .expect("local offset should not exceed i8 range"),
-                0,
-                0,
-            )
-            .expect("UTC offset should be valid");
-
-            tracing_subscriber::fmt::time::OffsetTime::new(utc_offset, time_format)
-        })
-        .init();
+    match &*env::LOG_FORMAT {
+        env::LogFormat::Json => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().json())
+                .init();
+        }
+        env::LogFormat::Forest => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(ForestLayer::default())
+                .init();
+        }
+        env::LogFormat::Unknown(value) => {
+            panic!("unknown LOG_FORMAT: {value:?}");
+        }
+        env::LogFormat::Unset => {
+            panic!("LOG_FORMAT environment variable is not set");
+        }
+    }
 
     // now we can properly use tracing
+    tracing::info!("link_yeeter starting up");
     tracing::debug!("tracing initialised");
 
     // start the bot
     Box::pin(bot::start()).await;
+
+    tracing::info!("link_yeeter shutting down");
 }

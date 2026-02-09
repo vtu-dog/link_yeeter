@@ -9,7 +9,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use futures::future::BoxFuture;
 use teloxide::{dispatching::UpdateHandler, error_handlers::ErrorHandler, prelude::*};
-use tracing::{debug, error};
+use tracing::{error, info};
 
 /// Start the bot.
 pub async fn start() {
@@ -31,17 +31,17 @@ pub async fn start() {
     // start the task manager, and the dispatcher
     task_manager_inner.start();
 
-    debug!("dispatcher started");
+    info!("dispatcher started, bot is ready to receive messages");
     tokio::select! {
         () = dispatcher.dispatch() => {
             task_manager_inner.stop();
-            debug!("dispatcher stopped");
+            info!("dispatcher stopped");
         }
     }
 }
 
 /// Define routes for the bot.
-fn schema() -> UpdateHandler<color_eyre::eyre::Report> {
+fn schema() -> UpdateHandler<anyhow::Error> {
     dptree::entry().chain(
         Update::filter_message()
             .branch(
@@ -71,7 +71,7 @@ where
     E: Debug,
 {
     fn handle_error(self: Arc<Self>, error: E) -> BoxFuture<'static, ()> {
-        error!("{error:#?}");
+        error!(error = ?error, "unhandled error in dispatcher");
         Box::pin(async {})
     }
 }

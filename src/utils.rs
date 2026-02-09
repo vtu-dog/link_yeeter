@@ -3,26 +3,26 @@
 use crate::env;
 
 use std::ops::Div;
+use std::time::Duration;
 
+/// Timeout for external commands (yt-dlp, ffmpeg).
+static COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+
+use anyhow::{Context, bail};
 use async_process::{Command, Stdio};
-use color_eyre::eyre::{self, Context, bail};
 use linkify::{LinkFinder, LinkKind};
-use rand::{Rng, distr::Alphanumeric};
+use rand::distr::{Alphanumeric, SampleString};
 use teloxide::types::InputFile;
-use tracing::{debug, debug_span};
+use tracing::{debug, debug_span, warn};
 use url::Url;
 
 /// Obtain a random string of specified length.
 pub fn random_string(size: usize) -> String {
-    rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(size)
-        .map(char::from)
-        .collect()
+    Alphanumeric.sample_string(&mut rand::rng(), size)
 }
 
 /// Information about URLs found in a message.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum URLsFound {
     /// No URLs found.
     None,
@@ -37,48 +37,40 @@ pub enum URLsFound {
     Multiple,
 }
 
-/// Parse a message and returns information about URLs found inside it.
+/// Parse a message and return information about URLs found inside it.
 pub fn get_url_info(msg: &str) -> URLsFound {
-    // create LinkFinder and initialise it with a proper config
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
 
-    // find all the links in msg
-    let links: Vec<_> = finder.links(msg).collect();
+    let urls: Vec<Url> = finder
+        .links(msg)
+        .filter_map(|link| Url::parse(link.as_str()).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .collect();
 
-    // parse the links and extract their netlocs
-    let all_urls = links
-        .iter()
-        .flat_map(|u| Url::parse(u.as_str()))
-        .collect::<Vec<_>>();
+    match urls.len() {
+        0 => URLsFound::None,
+        1 => {
+            let url = &urls[0];
+            let Some(host) = url.host_str() else {
+                return URLsFound::None;
+            };
 
-    if all_urls.is_empty() {
-        return URLsFound::None;
-    } else if all_urls.len() > 1 {
-        return URLsFound::Multiple;
-    }
+            // extract base domain (last two parts): www.youtube.com -> youtube.com
+            let parts: Vec<_> = host.split('.').collect();
+            let netloc = if parts.len() >= 2 {
+                format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
+            } else {
+                host.to_string()
+            };
 
-    // compare the netloc of a single URL against the allowlist
-    let single_url = all_urls.first().unwrap().to_owned();
-
-    // bail if host_str not found (for example, in mailto:_)
-    // otherwise, extract netloc and check if it's supported
-    single_url.host_str().map_or(URLsFound::None, |hs| {
-        let netloc = hs
-            .split('.')
-            .rev()
-            .take(2)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join(".");
-
-        URLsFound::One {
-            url: single_url.to_string(),
-            supported: env::ALLOWLIST.contains(&netloc),
+            URLsFound::One {
+                url: url.to_string(),
+                supported: env::ALLOWLIST.contains(&netloc),
+            }
         }
-    })
+        _ => URLsFound::Multiple,
+    }
 }
 
 /// `FFprobe` result.
@@ -96,13 +88,13 @@ pub struct Probe {
 
 /// Probe a video file for its duration, bitrate, width and height.
 pub fn ffprobe(path: &str) -> Option<Probe> {
-    let maybe_probe = ffprobe::ffprobe(path);
-
-    if maybe_probe.is_err() {
-        return None;
-    }
-
-    let probe = maybe_probe.unwrap();
+    let probe = match ffprobe::ffprobe(path) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(path = %path, error = %e, "ffprobe failed");
+            return None;
+        }
+    };
 
     let streams = probe.streams;
     let video_stream = streams
@@ -139,7 +131,7 @@ pub fn ffprobe(path: &str) -> Option<Probe> {
 }
 
 /// Download a video from an URL.
-pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::Result<()> {
+pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> anyhow::Result<()> {
     let max_filesize = {
         if enable_fallback {
             *env::FALLBACK_FILESIZE
@@ -148,7 +140,16 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::
         }
     };
 
-    let max_filesize_str = format!("{max_filesize}M");
+    debug!(
+        url = %url,
+        max_filesize_mb = max_filesize,
+        enable_fallback,
+        "invoking yt-dlp"
+    );
+
+    // yt-dlp uses mebibytes (M suffix), convert from megabytes
+    let max_filesize_mib = max_filesize * 1000 / 1024;
+    let max_filesize_str = format!("{max_filesize_mib}M");
     let output_str = format!("{dirname}/%(id)s.%(ext)s");
 
     let mut args = vec![
@@ -158,9 +159,10 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::
         &max_filesize_str,
     ];
 
-    // reddit workaround, still needed as of v2025.09.05
+    // reddit workaround, still needed as of v2026.02.04
     // TODO: add generic handling for other sites?
     if url.starts_with("https://www.reddit.com") {
+        debug!("applying reddit workaround headers");
         args.push("--add-header");
         args.push("accept:*/*");
     }
@@ -169,15 +171,18 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::
     args.push(&output_str);
     args.push(url);
 
-    // run yt-dlp and wait for it to finish
+    // run yt-dlp and wait for it to finish (with timeout)
     let child = Command::new("yt-dlp")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .wrap_err("failed to spawn yt-dlp")?;
+        .context("failed to spawn yt-dlp")?;
 
-    let output = child.output().await.wrap_err("yt-dlp execution failed")?;
+    let output = tokio::time::timeout(COMMAND_TIMEOUT, child.output())
+        .await
+        .context("yt-dlp timed out")?
+        .context("yt-dlp execution failed")?;
 
     let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -195,21 +200,29 @@ pub async fn download(url: &str, dirname: &str, enable_fallback: bool) -> eyre::
         String::from_utf8_lossy(&output.stderr) + String::from_utf8_lossy(&output.stdout);
 
     if output_str.contains(file_too_big_msg) {
-        bail!("file size exceeded {} megabytes", max_filesize);
+        warn!(url = %url, max_filesize_mb = max_filesize, "yt-dlp reported file too large");
+        bail!("file size exceeded {max_filesize} MB");
     }
 
     if !output.status.success() {
-        bail!(
-            "yt-dlp failed with status code {}",
-            output.status.code().unwrap_or(-1),
-        )
+        let exit_code = output.status.code().unwrap_or(-1);
+        warn!(url = %url, exit_code, "yt-dlp exited with error");
+        bail!("yt-dlp failed with status code {exit_code}")
     }
 
+    debug!(url = %url, "yt-dlp completed successfully");
     Ok(())
 }
 
 /// Convert a video to .mp4 format.
-pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> eyre::Result<()> {
+pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> anyhow::Result<()> {
+    debug!(
+        input = %input,
+        output = %output,
+        bitrate_kbps = ?maybe_bitrate,
+        "invoking ffmpeg for conversion"
+    );
+
     // compose the ffmpeg command arguments
     let mut args = vec![
         "-y", // overwrite output files if they already exist
@@ -224,7 +237,7 @@ pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> e
         "-b:a", // audio bitrate
         "128k",
         "-fs", // max filesize
-        "50M",
+        "50MB",
         "-vf", // make sure the video dimensions are even
         "crop=trunc(iw/2)*2:trunc(ih/2)*2",
     ]
@@ -240,18 +253,25 @@ pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> e
 
     args.push(output.to_string());
 
-    // run ffmpeg and wait for it to finish
+    // run ffmpeg and wait for it to finish (with timeout)
     let child = Command::new("ffmpeg")
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .wrap_err("failed to spawn ffmpeg")?;
+        .context("failed to spawn ffmpeg")?;
 
-    let output = child.output().await.wrap_err("ffmpeg execution failed")?;
+    let cmd_output = tokio::time::timeout(COMMAND_TIMEOUT, child.output())
+        .await
+        .context("ffmpeg timed out")?
+        .context("ffmpeg execution failed")?;
 
-    let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout_str = String::from_utf8_lossy(&cmd_output.stdout)
+        .trim()
+        .to_owned();
+    let stderr_str = String::from_utf8_lossy(&cmd_output.stderr)
+        .trim()
+        .to_owned();
 
     if !stdout_str.is_empty() {
         debug_span!("ffmpeg", "stdout").in_scope(|| debug!("{}", stdout_str));
@@ -261,19 +281,21 @@ pub async fn convert(input: &str, output: &str, maybe_bitrate: Option<u32>) -> e
         debug_span!("ffmpeg", "stderr").in_scope(|| debug!("{}", stderr_str));
     }
 
-    let status = output.status;
+    let status = cmd_output.status;
     if !status.success() {
-        bail!(
-            "ffmpeg failed with status code {}",
-            status.code().unwrap_or(-1)
-        );
+        let exit_code = status.code().unwrap_or(-1);
+        warn!(exit_code, "ffmpeg conversion failed");
+        bail!("ffmpeg failed with status code {exit_code}");
     }
 
+    debug!(output = %output, "ffmpeg conversion completed successfully");
     Ok(())
 }
 
 /// Extract a thumbnail from a video, saving it as a .jpg file and returning its path.
 pub async fn get_thumbnail(video_path: &str) -> Option<InputFile> {
+    debug!(video_path = %video_path, "extracting thumbnail");
+
     // get the parent folder of the video and construct the thumbnail path
     let parent_folder = std::path::Path::new(video_path).parent();
     let thumbnail_path = parent_folder
@@ -302,8 +324,172 @@ pub async fn get_thumbnail(video_path: &str) -> Option<InputFile> {
         .map(|s| s.success());
 
     if matches!(exit_code, Ok(true)) {
+        debug!(thumbnail_path = %thumbnail_path, "thumbnail extracted successfully");
         Some(InputFile::file(thumbnail_path))
     } else {
+        debug!("thumbnail extraction failed or skipped");
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod random_string {
+        use super::*;
+
+        #[test]
+        fn returns_empty_string_for_zero_size() {
+            assert_eq!(random_string(0), "");
+        }
+
+        #[test]
+        fn returns_correct_length() {
+            assert_eq!(random_string(10).len(), 10);
+            assert_eq!(random_string(100).len(), 100);
+        }
+
+        #[test]
+        fn contains_only_alphanumeric_chars() {
+            let s = random_string(1000);
+            assert!(s.chars().all(|c| c.is_ascii_alphanumeric()));
+        }
+
+        #[test]
+        fn generates_different_strings() {
+            let s1 = random_string(20);
+            let s2 = random_string(20);
+            // Extremely unlikely to be equal by chance
+            assert_ne!(s1, s2);
+        }
+    }
+
+    mod get_url_info {
+        use super::*;
+
+        #[test]
+        fn returns_none_for_empty_string() {
+            assert_eq!(get_url_info(""), URLsFound::None);
+        }
+
+        #[test]
+        fn returns_none_for_plain_text() {
+            assert_eq!(get_url_info("just some plain text"), URLsFound::None);
+        }
+
+        #[test]
+        fn rejects_non_http_schemes() {
+            assert_eq!(get_url_info("ftp://files.example.com"), URLsFound::None);
+            assert_eq!(get_url_info("mailto:test@example.com"), URLsFound::None);
+            assert_eq!(get_url_info("not://a-valid-url"), URLsFound::None);
+        }
+
+        #[test]
+        fn extracts_single_url() {
+            let result = get_url_info("check out https://example.com/video");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert_eq!(url, "https://example.com/video");
+                }
+                _ => panic!("expected URLsFound::One, got {result:?}"),
+            }
+        }
+
+        #[test]
+        fn extracts_url_with_query_params() {
+            let result = get_url_info("https://example.com/watch?v=abc123&t=10");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.contains("v=abc123"));
+                    assert!(url.contains("t=10"));
+                }
+                _ => panic!("expected URLsFound::One, got {result:?}"),
+            }
+        }
+
+        #[test]
+        fn returns_multiple_for_two_urls() {
+            assert_eq!(
+                get_url_info("https://example.com and https://other.com"),
+                URLsFound::Multiple
+            );
+        }
+
+        #[test]
+        fn extracts_netloc_without_subdomain() {
+            // The function extracts the last two parts of the domain
+            // So www.youtube.com -> youtube.com
+            let result = get_url_info("https://www.example.com/path");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.contains("www.example.com"));
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn handles_url_in_middle_of_text() {
+            let result = get_url_info("Please download https://example.com/file.mp4 thanks!");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert_eq!(url, "https://example.com/file.mp4");
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn handles_url_with_port() {
+            let result = get_url_info("https://example.com:8080/path");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.contains(":8080"));
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn handles_url_with_fragment() {
+            let result = get_url_info("https://example.com/page#section");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.contains("#section"));
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn handles_http_url() {
+            let result = get_url_info("http://example.com/video");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.starts_with("http://"));
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn handles_url_with_encoded_chars() {
+            let result = get_url_info("https://example.com/path%20with%20spaces");
+            match result {
+                URLsFound::One { url, .. } => {
+                    assert!(url.contains("%20"));
+                }
+                _ => panic!("expected URLsFound::One"),
+            }
+        }
+
+        #[test]
+        fn returns_multiple_for_three_urls() {
+            assert_eq!(
+                get_url_info("https://a.com https://b.com https://c.com"),
+                URLsFound::Multiple
+            );
+        }
     }
 }

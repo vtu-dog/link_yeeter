@@ -1,10 +1,14 @@
 //! A wrapper for enqueueing tasks.
 
-use crate::{task::Task, worker::Worker};
+use crate::{
+    task::Task,
+    worker::{QueuePosition, TentativeToken, Worker},
+};
 
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 /// Manager for `Task`s.
 pub struct TaskManagerInner {
@@ -18,13 +22,13 @@ impl TaskManagerInner {
     /// Start the inner worker.
     pub fn start(&self) {
         self.worker.start(self.cancellation_token.child_token());
-        tracing::debug!("task manager started");
+        info!("task manager started");
     }
 
     /// Stop the inner worker.
     pub fn stop(&self) {
         self.cancellation_token.cancel();
-        tracing::debug!("task manager stopped");
+        info!("task manager stopped");
     }
 }
 
@@ -50,17 +54,18 @@ impl TaskManager {
         self.inner.worker.queue_size()
     }
 
-    /// Get the current queue size, and tentatively accept a new task.
+    /// Tentatively accept a new task, returning a token and the current queue position.
     ///
-    /// This is used to not lose track of the number of `Task`s between sending
-    /// an acceptance message to the user and putting the `Task` itself into the queue.
-    pub fn tentative_enqueue(&self) -> usize {
+    /// The token keeps the tentative counter incremented. Dropping it cancels
+    /// the tentative task automatically. Pass it to [`Self::enqueue_task`] to
+    /// commit.
+    pub fn tentative_enqueue(&self) -> (TentativeToken, QueuePosition) {
         self.inner.worker.tentative_enqueue()
     }
 
-    /// Add a specified task to the queue, taking place of any tentative task.
-    pub fn enqueue_task(&self, task: Task) {
-        self.inner.worker.push(task);
+    /// Add a specified task to the queue, consuming the tentative token.
+    pub fn enqueue_task(&self, task: Task, token: TentativeToken) {
+        self.inner.worker.push(task, token);
     }
 }
 

@@ -12,3 +12,4 @@ services:
       ALLOWLIST: youtube.com,x.com
       MAX_FILESIZE: 200
       MAINTAINER: your-handle
+      LOG_FORMAT: forest
