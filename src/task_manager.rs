@@ -1,8 +1,9 @@
 //! A wrapper for enqueueing tasks.
 
 use crate::{
+    queue::{AcceptPermit, QueuePosition, TentativeToken},
     task::Task,
-    worker::{QueuePosition, TentativeToken, Worker},
+    worker::Worker,
 };
 
 use std::sync::Arc;
@@ -10,22 +11,22 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-/// Manager for `Task`s.
+/// Manages [`Task`] lifecycle and the underlying [`Worker`].
 pub struct TaskManagerInner {
-    /// Manager for download tasks.
+    /// The [`Worker`] that processes download tasks.
     worker: Worker,
-    /// A cancellation token for the inner `Worker`.
+    /// Cancellation token forwarded to the [`Worker`] on start.
     cancellation_token: CancellationToken,
 }
 
 impl TaskManagerInner {
-    /// Start the inner worker.
+    /// Starts the inner worker.
     pub fn start(&self) {
         self.worker.start(self.cancellation_token.child_token());
         info!("task manager started");
     }
 
-    /// Stop the inner worker.
+    /// Stops the inner worker.
     pub fn stop(&self) {
         self.cancellation_token.cancel();
         info!("task manager stopped");
@@ -41,29 +42,33 @@ impl Default for TaskManagerInner {
     }
 }
 
-/// Public interface for `TaskManagerInner`.
+/// Public, cloneable handle to a [`TaskManagerInner`].
 #[derive(Clone)]
 pub struct TaskManager {
-    /// Private `TaskManager` API object.
+    /// Shared inner state.
     inner: Arc<TaskManagerInner>,
 }
 
 impl TaskManager {
-    /// Get the current queue size.
+    /// Returns the current queue size.
     pub fn get_queue_size(&self) -> usize {
         self.inner.worker.queue_size()
     }
 
-    /// Tentatively accept a new task, returning a token and the current queue position.
+    /// Tentatively accepts a new task, returning a token, its queue position,
+    /// and an accept permit.
     ///
     /// The token keeps the tentative counter incremented. Dropping it cancels
     /// the tentative task automatically. Pass it to [`Self::enqueue_task`] to
     /// commit.
-    pub fn tentative_enqueue(&self) -> (TentativeToken, QueuePosition) {
+    ///
+    /// The permit must be used to send the acceptance message in order; see
+    /// [`AcceptPermit`].
+    pub fn tentative_enqueue(&self) -> (TentativeToken, QueuePosition, AcceptPermit) {
         self.inner.worker.tentative_enqueue()
     }
 
-    /// Add a specified task to the queue, consuming the tentative token.
+    /// Adds a task to the queue, consuming the tentative token.
     pub fn enqueue_task(&self, task: Task, token: TentativeToken) {
         self.inner.worker.push(task, token);
     }

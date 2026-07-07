@@ -1,8 +1,9 @@
 [package]
 name = "link_yeeter"
-version = "3.2.0"
+version = "3.3.0"
 authors = ["Wojciech Jarząbek <WojciechJarzabek@windowslive.com>"]
 edition = "2024"
+license = "MIT"
 publish = false
 
 [profile.dev]
@@ -11,9 +12,8 @@ debug = true
 [profile.release]
 opt-level = 3
 debug = true
-rpath = false
 lto = true
-debug-assertions = false
+debug-assertions = true
 codegen-units = 1
 panic = "unwind"
 incremental = false
@@ -21,37 +21,55 @@ overflow-checks = true
 
 [lints.rust]
 unsafe_code = "forbid"
+unused_qualifications = "warn"
+let_underscore_drop = "warn"
+missing_debug_implementations = "warn"
+unused_crate_dependencies = "warn"
+
+[lints.rustdoc]
+unescaped_backticks = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 missing_docs_in_private_items = { level = "warn", priority = -1 }
+# restriction lints
+dbg_macro = "warn"
+todo = "warn"
+exit = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+mem_forget = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
 
 [dependencies]
 # bot runtime
 teloxide = { version = "0.17.0", features = ["macros"] }
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 
 # async utilities
 async-fs = "2.2.0"
 async-process = "2.5.0"
 deadqueue = "0.2.5"
-futures = "0.3.31"
+futures = "0.3.32"
 tokio-util = "0.7.18"
 
 # general utilities
 dotenvy = "0.15.7"
 ffprobe = "0.4.0"
-linkify = "0.10.0"
-rand = "0.10.0"
-tempfile = "3.24.0"
+linkify = "0.11.0"
+psl = "2.1.216"
+rand = "0.10.2"
+tempfile = "3.27.0"
 url = "2.5.8"
-which = "8.0.0"
+which = "8.0.4"
 
 # logging & error handling
-anyhow = "1.0.101"
-petname = "2.0.2"
+anyhow = "1.0.103"
+petname = "3.1.0"
+thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-forest = { version = "0.3.1", features = ["tokio"] }
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

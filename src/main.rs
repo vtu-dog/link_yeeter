@@ -3,6 +3,9 @@
 mod bot;
 mod commands;
 mod env;
+mod media;
+mod messaging;
+mod queue;
 mod task;
 mod task_manager;
 mod utils;
@@ -17,6 +20,9 @@ use tracing_subscriber::{
 async fn main() {
     // load environment variables (.env file takes precedence)
     dotenvy::dotenv_override().ok();
+
+    // fail loudly on missing or malformed environment variables
+    env::validate();
 
     // make sure that the process can access essential binaries
     for bin in ["ffmpeg", "ffprobe", "yt-dlp"] {
@@ -41,15 +47,8 @@ async fn main() {
                 .with(ForestLayer::default())
                 .init();
         }
-        env::LogFormat::Unknown(value) => {
-            panic!("unknown LOG_FORMAT: {value:?}");
-        }
-        env::LogFormat::Unset => {
-            panic!("LOG_FORMAT environment variable is not set");
-        }
     }
 
-    // now we can properly use tracing
     tracing::info!("link_yeeter starting up");
     tracing::debug!("tracing initialised");
 

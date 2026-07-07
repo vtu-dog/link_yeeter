@@ -11,7 +11,7 @@ use futures::future::BoxFuture;
 use teloxide::{dispatching::UpdateHandler, error_handlers::ErrorHandler, prelude::*};
 use tracing::{error, info};
 
-/// Start the bot.
+/// Starts the bot.
 pub async fn start() {
     // create a task manager
     let task_manager_inner = Arc::new(TaskManagerInner::default());
@@ -20,7 +20,7 @@ pub async fn start() {
     // create the main bot instance
     let bot = Bot::from_env();
 
-    let mut dispatcher = Dispatcher::builder(bot, schema())
+    let mut dispatcher = Dispatcher::builder(bot.clone(), schema())
         .distribution_function(|_| None::<std::convert::Infallible>) // always process in parallel
         .dependencies(dptree::deps![task_manager_public])
         .error_handler(TracingErrorHandler::new())
@@ -28,19 +28,21 @@ pub async fn start() {
         .enable_ctrlc_handler()
         .build();
 
+    // verify connectivity before starting - hard crash if unreachable
+    bot.get_me()
+        .await
+        .expect("Telegram API should be reachable (check TELOXIDE_TOKEN and network)");
+
     // start the task manager, and the dispatcher
     task_manager_inner.start();
 
     info!("dispatcher started, bot is ready to receive messages");
-    tokio::select! {
-        () = dispatcher.dispatch() => {
-            task_manager_inner.stop();
-            info!("dispatcher stopped");
-        }
-    }
+    dispatcher.dispatch().await;
+    task_manager_inner.stop();
+    info!("dispatcher stopped");
 }
 
-/// Define routes for the bot.
+/// Defines routes for the bot.
 fn schema() -> UpdateHandler<anyhow::Error> {
     dptree::entry().chain(
         Update::filter_message()
@@ -56,11 +58,11 @@ fn schema() -> UpdateHandler<anyhow::Error> {
     )
 }
 
-/// A logging error handler that utilises `tracing`.
+/// A logging error handler that uses [`tracing`] for output.
 struct TracingErrorHandler {}
 
 impl TracingErrorHandler {
-    /// Create a new instance of `TracingErrorHandler`.
+    /// Creates a new [`TracingErrorHandler`].
     fn new() -> Arc<Self> {
         Arc::new(Self {})
     }
